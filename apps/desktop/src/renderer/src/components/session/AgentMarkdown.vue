@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed } from "vue"
-import { renderMarkdown } from "../../services/markdown.ts"
-const props = defineProps<{ text: string }>()
+import { createStreamingMarkdownRenderer } from "../../services/streaming-markdown.ts"
+const props = defineProps<{ text: string; streaming?: boolean }>()
+const render = createStreamingMarkdownRenderer()
 // markdown-it escapes raw HTML, so the rendered output is safe to inject.
-const html = computed(() => renderMarkdown(props.text))
+const html = computed(() => render(props.text, props.streaming ?? false))
 </script>
 
 <template>

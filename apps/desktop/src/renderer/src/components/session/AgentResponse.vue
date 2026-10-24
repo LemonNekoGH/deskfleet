@@ -53,9 +53,9 @@ const toggleThought = (id: string) => thoughts.has(id) ? thoughts.delete(id) : t
           <button type="button" class="group/thought inline-flex cursor-pointer items-center gap-1 hover:text-ui-text" :aria-expanded="thoughts.has(step.id)" @click="toggleThought(step.id)">
             {{ t('agent.thinking') }}<ChevronRight :size="14" :stroke-width="2" class="opacity-0 transition-transform group-hover/thought:opacity-100" :class="thoughts.has(step.id) && 'rotate-90 opacity-100'" aria-hidden="true" />
           </button>
-          <AgentContent v-if="thoughts.has(step.id)" :content="step.content" markdown class="mt-1" />
+          <AgentContent v-if="thoughts.has(step.id)" :content="step.content" markdown :streaming="response.live" class="mt-1" />
         </div>
-        <AgentContent v-else :content="step.content" markdown class="py-1" />
+        <AgentContent v-else :content="step.content" markdown :streaming="response.live" class="py-1" />
       </div>
     </div>
     <AgentContent v-if="answer" :content="answer.content" markdown :data-conversation-entry="answer.id" />

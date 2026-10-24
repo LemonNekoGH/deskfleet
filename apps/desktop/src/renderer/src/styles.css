@@ -228,3 +228,15 @@ textarea {
 }
 .ui-markdown th { font-weight: 600; }
 .ui-markdown img { max-width: 100%; border-radius: 0.5rem; }
+
+@keyframes ui-stream-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ui-stream-fade {
+    animation-name: ui-stream-fade;
+    animation-timing-function: ease-out;
+    animation-fill-mode: both;
+  }
+}
