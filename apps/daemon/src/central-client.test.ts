@@ -70,6 +70,42 @@ test("remote enrollment requires TLS and accepts HTTP only on loopback", () => {
   assert.throws(() => centralUrl("https://user:secret@backend.example"), /origin URL/)
 })
 
+test("delegation rechecks membership without treating a removed user as a revoked machine", async context => {
+  const directory = await mkdtemp(join(tmpdir(), "df-delegation-"))
+  const daemon = await startDaemon(0, { controlDirectory: directory, requestScreenCaptureAccess: async () => null, requestAccessibilityAccess: async () => null, requestFullDiskAccess: async () => null })
+  const identity = daemon.central.status().identity
+  let status = 200
+  const users: string[] = []
+  const server = createServer(async (request, response) => {
+    assert.equal(request.headers.authorization, "Bearer machine-secret")
+    response.setHeader("content-type", "application/json")
+    if (request.url === "/api/daemon/me") {
+      response.end(JSON.stringify({ serverId: "server", machine: { id: "machine", teamId: "team", originId: identity.originId, localMachineId: identity.machineId } }))
+    } else if (request.url === "/api/daemon/authorize-delegation") {
+      let body = ""
+      for await (const chunk of request) body += chunk
+      users.push(JSON.parse(body).userId)
+      response.writeHead(status)
+      response.end(JSON.stringify({ authorized: status === 200 }))
+    } else response.end("{}")
+  })
+  server.on("upgrade", (_request, socket) => socket.destroy())
+  server.listen(0, "127.0.0.1"); await once(server, "listening")
+  context.after(async () => { await daemon.close(); await server[Symbol.asyncDispose](); await rm(directory, { recursive: true, force: true }) })
+  const actor = { kind: "user" as const, userId: "creator", deviceId: "original-login" }
+  await assert.rejects(daemon.central.authorizeDelegation(actor), /unavailable/)
+  await daemon.central.enroll({ serverUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, machineId: "machine", teamId: "team", token: "machine-secret" })
+  await assert.rejects(daemon.central.authorizeDelegation({ kind: "local_token" }), /verified/)
+  assert.deepEqual(await daemon.central.authorizeDelegation(actor), actor)
+  status = 403
+  await assert.rejects(daemon.central.authorizeDelegation(actor), /403/)
+  assert.equal(daemon.central.status().revoked, false)
+  status = 401
+  await assert.rejects(daemon.central.authorizeDelegation(actor), /401/)
+  assert.equal(daemon.central.status().revoked, true)
+  assert.deepEqual(users, ["creator", "creator", "creator"])
+})
+
 test("read and signaling RPCs do not republish catalogs; resource events still synchronize", async context => {
   const directory = await mkdtemp(join(tmpdir(), "df-sync-events-"))
   context.after(() => rm(directory, { recursive: true, force: true }))

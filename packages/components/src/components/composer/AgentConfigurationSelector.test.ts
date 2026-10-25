@@ -96,6 +96,29 @@ test("opens a compact configuration menu and dynamically populates checked subme
   expect(view.find("select").exists()).toBe(false)
 })
 
+test("controlled draft configuration discovers and edits form-local choices without changing composer defaults", async () => {
+  const defaults = { provider: "codex", model: "sequoia", reasoningEffort: "medium", mode: "acceptEdits" }
+  agents.draftConfiguration = { ...defaults }
+  await flushPromises()
+  const persisted = window.localStorage.getItem(storageKey)
+  const api = vi.mocked(agents.agentConfiguration).mockResolvedValue(nativeConfiguration("plan", "orbit", "high"))
+  const view = mount(AgentConfigurationSelector, {
+    attachTo: document.body,
+    props: { workspaceId: "11", providerId: "codex", selection: { provider: "codex", model: "orbit", reasoningEffort: "high", mode: "plan" }, "onUpdate:selection": value => { void view.setProps({ selection: value }) } },
+    global: { plugins: [i18n, pinia] },
+  })
+  wrappers.push(view)
+  await trigger(view).trigger("click"); await flushPromises()
+  expect(api).toHaveBeenCalledExactlyOnceWith({ probeId: expect.any(String), provider: "codex", workspaceId: "11", model: "orbit", reasoningEffort: "high", mode: "plan" })
+  expect(agents.draftConfiguration).toEqual(defaults)
+  api.mockResolvedValueOnce(nativeConfiguration("auto", "orbit", "high"))
+  await choose(view, "mode", "auto")
+  expect(view.props("selection")).toEqual({ provider: "codex", model: "orbit", reasoningEffort: "high", mode: "auto" })
+  expect(trigger(view).text()).toBe("Codex · Orbit · High · Auto")
+  expect(agents.draftConfiguration).toEqual(defaults)
+  expect(window.localStorage.getItem(storageKey)).toBe(persisted)
+})
+
 test("enables reasoning when the selected model advertises effort levels", async () => {
   const providers = useProvidersStore()
   providers.providers = [{ id: "cursor", name: "Cursor", template: "cursor" }, { id: "grok", name: "Grok", template: "grok" }]

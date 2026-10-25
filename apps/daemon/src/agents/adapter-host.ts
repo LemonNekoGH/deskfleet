@@ -6,8 +6,9 @@ import type { AgentProcess } from "./acp.ts"
 /** Each bundled ACP adapter runs in a child of the embedding executable, selected by one argument. */
 export const CODEX_ACP_ARGUMENT = "--codex-acp"
 export const CLAUDE_AGENT_ACP_ARGUMENT = "--claude-agent-acp"
+export const DESKFLEET_MCP_ARGUMENT = "--deskfleet-mcp"
 
-export type AdapterArgument = typeof CODEX_ACP_ARGUMENT | typeof CLAUDE_AGENT_ACP_ARGUMENT
+export type AdapterArgument = typeof CODEX_ACP_ARGUMENT | typeof CLAUDE_AGENT_ACP_ARGUMENT | typeof DESKFLEET_MCP_ARGUMENT
 
 let adapterHost: AgentProcess | undefined
 

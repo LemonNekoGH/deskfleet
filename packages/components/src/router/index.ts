@@ -6,6 +6,8 @@ declare module "vue-router" {
     titleKey?: string
     /** The page draws its own navigation in place of the sidebar and details panel. */
     fullWindow?: boolean
+    /** Management pages have no selected resource for the details panel. */
+    hideDetails?: boolean
   }
 }
 
@@ -17,6 +19,12 @@ export const router = createRouter({
       path: "/",
       name: "new-session",
       component: () => import("../views/NewSessionView.vue"),
+    },
+    {
+      path: "/schedules",
+      name: "schedules",
+      component: () => import("../views/ScheduledTasksView.vue"),
+      meta: { hideDetails: true },
     },
     {
       path: "/workspaces/:workspaceId",
@@ -78,6 +86,11 @@ export const router = createRouter({
           path: "agents",
           name: "settings-agents",
           component: () => import("../components/settings/AgentsSettings.vue"),
+        },
+        {
+          path: "mcp-servers",
+          name: "settings-mcp-servers",
+          component: () => import("../components/settings/McpServersSettings.vue"),
         },
         {
           path: "team",

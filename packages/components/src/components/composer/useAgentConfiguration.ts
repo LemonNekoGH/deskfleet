@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, ref, watch } from "vue"
+import { computed, onScopeDispose, ref, toRef, watch, type Ref } from "vue"
 import type { AgentConfiguration } from "../../../../client/src/agent-configuration.ts"
 import { useAgentSessionsStore, type AgentSelection } from "../../stores/agent-sessions.ts"
 import { useProvidersStore } from "../../stores/providers.ts"
@@ -13,12 +13,13 @@ interface ConfigurationProbe {
 }
 
 /** Draft choices are local preferences; existing Sessions always use their live agent. */
-export function useAgentConfiguration(target: () => { workspaceId?: string; sessionId?: string; providerId?: string }) {
+export function useAgentConfiguration(target: () => { workspaceId?: string; sessionId?: string; providerId?: string }, draft?: Ref<AgentSelection>) {
   const agents = useAgentSessionsStore()
   const providers = useProvidersStore()
+  const draftConfiguration = draft ?? toRef(agents, "draftConfiguration")
   const discovered = ref<AgentConfiguration | null>(null)
   const configuration = computed(() => target().sessionId ? agents.configurations[target().sessionId!] ?? null : discovered.value)
-  const selection = computed(() => !target().sessionId && agents.draftConfiguration.provider === target().providerId ? agents.draftConfiguration : undefined)
+  const selection = computed(() => !target().sessionId && draftConfiguration.value.provider === target().providerId ? draftConfiguration.value : undefined)
   const expanded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -44,7 +45,7 @@ export function useAgentConfiguration(target: () => { workspaceId?: string; sess
   function confirm(result: AgentConfiguration, params: ConfigurationProbe["params"]): void {
     discovered.value = result
     confirmedTarget = { provider: params.provider, workspaceId: params.workspaceId }
-    agents.draftConfiguration = {
+    draftConfiguration.value = {
       provider: result.provider.id,
       model: result.models?.currentValue,
       reasoningEffort: result.reasoningEfforts?.currentValue,

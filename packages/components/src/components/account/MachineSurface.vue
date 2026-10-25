@@ -20,7 +20,7 @@ let disposed = false
 
 // Every store and cache is scoped to one machine so equal local IDs on two machines never meet.
 onMounted(async () => {
-  await router.replace("/")
+  await router.replace(router.currentRoute.value.name === "schedules" ? "/schedules" : "/")
   if (disposed || !root.value) return
   remote = remoteMachineClient(props.host, props.session.central, props.machine)
   configureClient(remote.api)

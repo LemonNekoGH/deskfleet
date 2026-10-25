@@ -16,7 +16,7 @@ process. It owns ACP providers, the shared backlog, steering, permissions,
 Session archive/restore, and native media. Electron retains a sandboxed renderer
 and stays in the tray after its windows close. The local discovery socket serves
 host setup, enrollment, and shutdown; it does not authorize team resource access.
-The MCP facade below remains follow-up work.
+Session-scoped MCP tools and Scheduled Tasks run alongside those daemon services.
 
 ## Components
 
@@ -469,8 +469,13 @@ to worktrees on that target machine. The agent coordinates related work across
 machines; deskfleet does not create a global Project or synchronize repository
 contents automatically.
 
-The MCP facade shares the same operations and permissions as human clients.
-Its placement and provider configuration will be selected during integration.
+The independent `@deskfleet/mcp` stdio server is injected into managed ACP
+Sessions. Its built-in tools share the same operations as human clients, with a
+delegation restricted to the issuing Session's Workspace and current Team
+membership checked on every call. Settings configures additional MCP servers
+separately; the built-in server is always injected. Cross-machine delegation
+remains subsequent work. The [Scheduled Tasks and MCP guide](scheduled-tasks.md)
+owns timing, persistence, authorization, and provider injection details.
 
 ## History and authorization
 
@@ -566,7 +571,8 @@ Dependencies flow `server -> protocol -> model`, `server -> control-store -> pro
 `node -> native -> capture/encoder/input`, and
 `@deskfleet/daemon -> @deskfleet/native`. The pnpm workspace contains the daemon,
 Electron and Web applications, the native package, `packages/client` for shared
-contracts/transports, and `packages/components` for Vue UI, stores, and routes.
+contracts/transports, `packages/components` for Vue UI, stores, and routes, and
+`packages/mcp` for the independent Agent tool server.
 TypeScript control wire types derive from the Rust protocol crate; napi
 declarations describe the native API separately.
 
@@ -591,7 +597,7 @@ and open a terminal. Work continues after closing the client, reconnecting
 restores the Session view, and synchronized history remains available while the
 machine is offline. Validate direct and TURN-relayed connections.
 
-MCP coordination follows that workflow. Bundling provider binaries,
+Cross-machine MCP coordination follows that workflow. Bundling provider binaries,
 additional terminal backends, and Linux capture/encoding remain
 separate follow-up work.
 

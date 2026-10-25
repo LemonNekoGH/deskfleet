@@ -8,6 +8,9 @@ import { listDirectories } from "./filesystem.ts"
 import type { TerminalDial, TerminalSummary } from "./terminal-protocol.ts"
 import type { TerminalSessions } from "./terminals.ts"
 import type { ProviderSetup } from "./provider-setup.ts"
+import type { ScheduledTasks } from "./scheduled-tasks.ts"
+import type { McpServers } from "./mcp-servers.ts"
+import { mcpServerInput, validateMcpServerId } from "./mcp-server-protocol.ts"
 
 const MANAGEMENT = new Set<AgentMethod>([
   "_deskfleet/agent/configuration", "_deskfleet/session/configuration", "_deskfleet/session/configure",
@@ -22,14 +25,21 @@ export class MachineOperations {
   readonly terminals: TerminalSessions
   readonly providers: AgentProviders
   readonly setup: ProviderSetup
+  readonly schedules?: ScheduledTasks
+  readonly mcpServers?: McpServers
   readonly #capabilities: () => Promise<DesktopCapabilities>
+  #workspaceMutations: Promise<unknown> = Promise.resolve()
 
   constructor(options: {
     agents: AgentSessions; catalog: DaemonCatalog; terminals: TerminalSessions
     providers: AgentProviders; setup: ProviderSetup; capabilities: () => Promise<DesktopCapabilities>
+    schedules?: ScheduledTasks
+    mcpServers?: McpServers
   }) {
     this.agents = options.agents; this.catalog = options.catalog; this.terminals = options.terminals
     this.providers = options.providers; this.setup = options.setup; this.#capabilities = options.capabilities
+    this.schedules = options.schedules
+    this.mcpServers = options.mcpServers
   }
 
   async dial(params: TerminalDial): Promise<TerminalSummary> {
@@ -39,16 +49,44 @@ export class MachineOperations {
     return this.agents.withActiveSession(worktree.sessionId, () => this.terminals.dial({ ...params, cwd: params.cwd ?? worktree.directories[0]!.path }))
   }
 
+  #workspaceMutation<T>(action: () => Promise<T>): Promise<T> {
+    const pending = this.#workspaceMutations.catch(() => {}).then(action)
+    this.#workspaceMutations = pending
+    return pending
+  }
+
   async handle(method: string, params: unknown, actor: AgentActor | undefined): Promise<unknown> {
     if (actor?.kind !== "user" || !actor.userId || !actor.deviceId) throw new Error("A verified user and login session are required")
+    if (["mcpServerList", "mcpServerCreate", "mcpServerUpdate", "mcpServerRemove"].includes(method)) {
+      if (!this.mcpServers) throw new Error("MCP server settings are unavailable")
+      if (!params || typeof params !== "object" || Array.isArray(params)) throw new Error("Expected MCP server parameters")
+      const input = params as Record<string, unknown>
+      if (method === "mcpServerList") return this.mcpServers.snapshot()
+      if (method === "mcpServerCreate") return this.mcpServers.create(mcpServerInput(input.server))
+      validateMcpServerId(input.serverId)
+      if (method === "mcpServerUpdate") return this.mcpServers.update(input.serverId, mcpServerInput(input.changes))
+      await this.mcpServers.remove(input.serverId)
+      return null
+    }
+    if (["scheduleList", "scheduleCreate", "scheduleUpdate", "scheduleDelete", "scheduleRun"].includes(method)) {
+      if (!this.schedules) throw new Error("Scheduled tasks are unavailable")
+      if (method === "scheduleCreate") return this.#workspaceMutation(() => this.schedules!.handle(method, params, actor))
+      return this.schedules.handle(method, params, actor)
+    }
     if (MANAGEMENT.has(method as AgentMethod)) return this.agents.handle(method as AgentMethod, params, actor)
     const request = parseControlRequest({ id: 0, method, params })
     switch (request.method) {
       case "catalogList":
       case "workspaceCreate":
       case "workspaceUpdate":
-      case "workspaceDelete":
         return this.catalog.handle(request)
+      case "workspaceDelete": {
+        return this.#workspaceMutation(async () => {
+          const schedules = await this.schedules?.handle("scheduleList", {}, actor) as { workspaceId: string }[] | undefined
+          if (schedules?.some(schedule => schedule.workspaceId === request.params.workspaceId)) throw new Error("Remove this Workspace's scheduled tasks before deleting it")
+          return this.catalog.handle(request)
+        })
+      }
       case "directoryList": return listDirectories(request.params.path)
       case "providerList": return this.providers.snapshot()
       case "providerCreate": return this.providers.create(request.params.provider)

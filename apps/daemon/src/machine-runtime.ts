@@ -2,6 +2,10 @@ import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { AgentProviders } from "./agent-providers.ts"
 import { AgentSessions } from "./agent-sessions.ts"
+import { AgentMcp } from "./agent-mcp.ts"
+import { dispatchMcp } from "./mcp-dispatch.ts"
+import { ScheduledTasks } from "./scheduled-tasks.ts"
+import { McpServers } from "./mcp-servers.ts"
 import type { AgentProvider } from "./agents/acp.ts"
 import { DaemonCatalog } from "./catalog.ts"
 import { CentralClient } from "./central-client.ts"
@@ -26,15 +30,18 @@ async function openMachine(directory: string, hostDirectory: string, options: Ma
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const catalog = new DaemonCatalog(directory, hostDirectory)
   const providers = new AgentProviders(directory, options.agentProvider)
+  const mcpServers = new McpServers(directory)
   const terminals = options.terminals ?? new TerminalSessions({ directory: join(directory, "terminals") })
   const setup = new ProviderSetup(terminals)
   let agents: AgentSessions | undefined
   let central: CentralClient | undefined
+  let schedules: ScheduledTasks | undefined
+  let mcp: AgentMcp | undefined
   let stopping: Promise<void> | undefined
   let closing: Promise<void> | undefined
   const stop = () => stopping ??= (async () => {
     // Providers must close before awaiting a create/configure RPC they can unblock.
-    const results = await Promise.allSettled([central?.stop(), agents?.close(), terminals.close()])
+    const results = await Promise.allSettled([schedules?.close(), mcp?.close(), central?.stop(), agents?.close(), terminals.close()])
     const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : [])
     if (failures.length) throw new AggregateError(failures, "Failed to stop machine resources")
   })()
@@ -49,14 +56,29 @@ async function openMachine(directory: string, hostDirectory: string, options: Ma
     await catalog.init(options.openCatalog)
     catalog.onSessionRelease(worktreeId => terminals.hangupOwned(worktreeId))
     await providers.init()
-    agents = new AgentSessions(catalog, catalog.native, options.agentProvider, providers)
+    await mcpServers.init()
+    let operations: MachineOperations
+    const authorize = async (actor: Parameters<CentralClient["authorizeDelegation"]>[0]) => {
+      if (!central) throw new Error("Machine delegation is not ready")
+      return central.authorizeDelegation(actor)
+    }
+    mcp = new AgentMcp({
+      servers: () => mcpServers.resolve(),
+      authorize: async actor => { await authorize(actor) },
+      dispatch: (method, params, actor, scope) => dispatchMcp(operations, method, params, actor, scope),
+    })
+    await mcp.init()
+    agents = new AgentSessions(catalog, catalog.native, options.agentProvider, providers, mcp)
     await agents.init()
     await terminals.init()
     agents.onSessionArchive(worktreeId => terminals.stopOwned(worktreeId))
-    const operations = new MachineOperations({ agents, catalog, providers, terminals, setup, capabilities: options.capabilities })
+    schedules = new ScheduledTasks(directory, { agents, catalog, providers, authorize })
+    await schedules.init()
+    operations = new MachineOperations({ agents, catalog, providers, terminals, setup, schedules, mcpServers, capabilities: options.capabilities })
     central = new CentralClient(directory, operations, options.peers)
     await central.init()
-    return { directory, catalog, providers, setup, agents, terminals, central, stop, close }
+    schedules.start()
+    return { directory, catalog, providers, mcpServers, setup, agents, terminals, central, schedules, mcp, operations, stop, close }
   } catch (error) {
     try { await close() }
     catch (cleanup) { throw new AggregateError([error, cleanup], "Machine startup and cleanup failed", { cause: error }) }

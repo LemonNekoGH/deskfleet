@@ -10,6 +10,7 @@ import { agentConfiguration, type AgentConfiguration, type AgentConfigurationSel
 import { savedAgentConfiguration } from "./agent-session-configuration.ts"
 import { withRestoredSessionMode } from "./agents/session-modes.ts"
 import { AgentElicitations } from "./agent-elicitations.ts"
+import type { AgentMcp, AgentMcpLease } from "./agent-mcp.ts"
 
 const liveTurn = (turn: AgentTurn) => ["starting", "running", "cancelling"].includes(turn.state)
 export type ResolveAgentProvider = (providerId: string) => { provider: AgentProvider; config: AgentConfig }
@@ -26,6 +27,8 @@ export class AgentRuntime {
   readonly elicitations: AgentElicitations
   readonly #catalog: DaemonCatalog
   readonly #resolveProvider: ResolveAgentProvider
+  readonly #mcp?: AgentMcp
+  #mcpLease?: AgentMcpLease
   #providerName?: string
   #configuration?: acp.SessionConfigOption[]
   #availableConfiguration?: acp.SessionConfigOption[]
@@ -46,10 +49,11 @@ export class AgentRuntime {
   readonly #permissions = new Map<string, (response: acp.RequestPermissionResponse) => void>()
   readonly #discoveries = new Set<{ controller: AbortController; signal: AbortSignal; pending: Promise<AgentConfiguration> }>()
 
-  constructor(journal: AgentJournal, catalog: DaemonCatalog, resolveProvider: ResolveAgentProvider, sessionId: string) {
+  constructor(journal: AgentJournal, catalog: DaemonCatalog, resolveProvider: ResolveAgentProvider, sessionId: string, mcp?: AgentMcp) {
     this.journal = journal
     this.#catalog = catalog
     this.#resolveProvider = resolveProvider
+    this.#mcp = mcp
     this.sessionId = sessionId
     this.elicitations = new AgentElicitations(journal, sessionId, () => ({
       generation: this.#run?.generation, turnId: this.#active?.turn.id,
@@ -205,7 +209,17 @@ export class AgentRuntime {
       if (additionalDirectories.length && !capabilities?.sessionCapabilities?.additionalDirectories) {
         throw new Error("This agent cannot use all of this Session's directories")
       }
-      const params = { cwd: worktree.directories[0].path, mcpServers: [], ...(additionalDirectories.length ? { additionalDirectories } : {}) }
+      if (this.#mcp) {
+        const creation = (await this.journal.commands(this.sessionId)).find(command => command.isCanonical && command.method === "_deskfleet/session/create")
+        if (!creation) throw new Error("This Session has no initiating command for MCP delegation")
+        this.#mcpLease = this.#mcp.lease(this.sessionId, snapshot.session.workspaceId, creation.actor)
+        for (const server of this.#mcpLease.servers) {
+          if ("type" in server && !capabilities?.mcpCapabilities?.[server.type]) {
+            throw new Error(`This Agent does not support the ${server.type.toUpperCase()} transport required by MCP server "${server.name}". Change or disable that server in MCP Servers settings.`)
+          }
+        }
+      }
+      const params = { cwd: worktree.directories[0].path, mcpServers: this.#mcpLease?.servers ?? [], ...(additionalDirectories.length ? { additionalDirectories } : {}) }
       let providerSessionId = snapshot.session.providerSessionId
       let responseOptions: acp.SessionConfigOption[] | undefined
       this.#openingConfiguration = true
@@ -247,6 +261,7 @@ export class AgentRuntime {
       void this.pump()
     } catch (error) {
       this.#stopping = true
+      this.#releaseMcp()
       await this.#connection?.close().catch(() => {})
       this.#connection = undefined
       run.state = "failed"
@@ -512,6 +527,7 @@ export class AgentRuntime {
 
   #connectionLost(error: Error, generation: number): void {
     if (this.#run?.generation !== generation || this.#stopping) return
+    this.#releaseMcp()
     this.#connection = undefined
     const recovery = this.#lost(error, generation).catch(error => console.error("Agent recovery failed", error)).finally(() => {
       if (this.#recovering === recovery) this.#recovering = undefined
@@ -541,12 +557,14 @@ export class AgentRuntime {
   }
   async #stopRun(): Promise<void> {
     this.#stopping = true
+    this.#releaseMcp()
     const discoveries = [...this.#discoveries]
     for (const discovery of discoveries) discovery.controller.abort(new Error("Agent configuration discovery was stopped"))
     // Startup can be awaiting session/new or resume. Closing its connection
     // must be able to reject that RPC before we wait for startup to finish.
     if (this.#starting) await this.#connection?.close()
     await this.#starting?.catch(() => {})
+    this.#releaseMcp()
     await Promise.all(discoveries.map(async discovery => {
       try { await discovery.pending }
       catch (error) { if (error !== discovery.signal.reason) throw error }
@@ -566,5 +584,10 @@ export class AgentRuntime {
       this.#run = { ...this.#run, state: "stopped", endedAt: timestamp() }
       await this.journal.commit(snapshot, { runs: [this.#run], events: [this.journal.event(this.sessionId, "run", this.#run)] })
     })
+  }
+
+  #releaseMcp(): void {
+    this.#mcpLease?.close()
+    this.#mcpLease = undefined
   }
 }

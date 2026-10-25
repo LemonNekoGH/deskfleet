@@ -7,17 +7,24 @@ import type { AgentChoice } from "../../../../client/src/agent-configuration.ts"
 import { useAgentConfiguration } from "./useAgentConfiguration.ts"
 import ProviderIcon from "../common/ProviderIcon.vue"
 import { useProvidersStore } from "../../stores/providers.ts"
-import { useAgentSessionsStore } from "../../stores/agent-sessions.ts"
+import { useAgentSessionsStore, type AgentSelection } from "../../stores/agent-sessions.ts"
 
-const props = defineProps<{ workspaceId?: string; sessionId?: string; disabled?: boolean }>()
-const emit = defineEmits<{ loading: [value: boolean] }>()
+const props = defineProps<{ workspaceId?: string; sessionId?: string; providerId?: string; selection?: AgentSelection; disabled?: boolean }>()
+const emit = defineEmits<{ loading: [value: boolean]; "update:providerId": [value: string]; "update:selection": [value: AgentSelection] }>()
 const { t, te } = useI18n()
 const providers = useProvidersStore()
 const agents = useAgentSessionsStore()
-const providerId = computed(() => props.sessionId ? agents.sessions[props.sessionId]?.provider ?? agents.configurations[props.sessionId]?.provider.id : providers.selectedId)
+const draftSelection = computed({
+  get: () => props.selection ?? agents.draftConfiguration,
+  set: (value: AgentSelection) => {
+    if (props.selection === undefined) agents.draftConfiguration = value
+    else emit("update:selection", value)
+  },
+})
+const providerId = computed(() => props.sessionId ? agents.sessions[props.sessionId]?.provider ?? agents.configurations[props.sessionId]?.provider.id : props.providerId ?? providers.selectedId)
 const selectedProvider = computed(() => providers.providers.find(provider => provider.id === providerId.value))
-const providerUnavailable = computed(() => !!props.sessionId && providers.loaded && !selectedProvider.value)
-const { configuration, expanded, loading, error, modelName, modelValue, requestedModel, reasoningEffort, modeName, toggle, changeModel, changeReasoningEffort, changeMode, reload } = useAgentConfiguration(() => ({ workspaceId: props.workspaceId, sessionId: props.sessionId, providerId: providerId.value }))
+const providerUnavailable = computed(() => !!(props.sessionId || props.providerId) && providers.loaded && !selectedProvider.value)
+const { configuration, expanded, loading, error, modelName, modelValue, requestedModel, reasoningEffort, modeName, toggle, changeModel, changeReasoningEffort, changeMode, reload } = useAgentConfiguration(() => ({ workspaceId: props.workspaceId, sessionId: props.sessionId, providerId: providerId.value }), draftSelection)
 const providerPending = computed(() => !selectedProvider.value && !configuration.value && !providerUnavailable.value)
 watch(loading, value => emit("loading", value), { immediate: true })
 const controlsId = useId()
@@ -83,7 +90,10 @@ function move(event: KeyboardEvent, selector: string, direction: number): void {
 }
 function choose(control: Control, value: string): void {
   void closeOptions(control)
-  if (control === "agent" && !props.sessionId) providers.selectedId = value
+  if (control === "agent" && !props.sessionId) {
+    if (props.providerId === undefined) providers.selectedId = value
+    else emit("update:providerId", value)
+  }
   if (control === "model") void changeModel(value)
   if (control === "reasoning") void changeReasoningEffort(value)
   if (control === "mode") void changeMode(value)

@@ -107,6 +107,10 @@ pub fn configure(config: &mut ServiceConfig) {
                 web::get().to(api::command),
             )
             .route("/daemon/me", web::get().to(api::daemon_me))
+            .route(
+                "/daemon/authorize-delegation",
+                web::post().to(api::authorize_delegation),
+            )
             .route("/daemon/catalog", web::post().to(api::sync_catalog))
             .route("/daemon/history", web::post().to(api::sync_history))
             .route("/daemon/ws", web::get().to(websocket::daemon))

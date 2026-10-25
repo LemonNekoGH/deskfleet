@@ -66,6 +66,24 @@ export class CentralClient {
     }
   }
 
+  /** Schedules and session tools retain user intent, never a reusable user login token. */
+  async authorizeDelegation(actor: AgentActor): Promise<AgentActor> {
+    const credentials = this.#credentials
+    if (actor.kind !== "user" || !actor.userId || !actor.deviceId) throw new Error("A verified user delegation is required")
+    if (!credentials || credentials.revoked || this.#stopping || this.#closed) throw new Error("Machine delegation is unavailable")
+    const response = await fetch(`${credentials.serverUrl}/api/daemon/authorize-delegation`, {
+      method: "POST", headers: { authorization: `Bearer ${credentials.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ userId: actor.userId }),
+      signal: AbortSignal.any([AbortSignal.timeout(15_000), this.#httpClosing.signal]),
+    })
+    // A removed user is forbidden without revoking this otherwise valid machine.
+    if (response.status === 401) await this.#revoked()
+    if (!response.ok) throw new Error(`User delegation is no longer authorized (${response.status})`)
+    const result = await response.json() as { authorized?: boolean }
+    if (result.authorized !== true) throw new Error("Backend did not authorize this user delegation")
+    return structuredClone(actor)
+  }
+
   async enroll(value: MachineEnrollment): Promise<CentralStatus> {
     if (this.#stopping || this.#closed || this.#enrolling) throw new Error("Machine enrollment is unavailable")
     if (this.#credentials) throw new Error("This daemon already belongs to a team")

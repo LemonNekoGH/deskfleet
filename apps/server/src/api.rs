@@ -249,6 +249,15 @@ const MANAGEMENT: &[&str] = &[
     "_deskfleet/session/configure",
     "_deskfleet/agent/configuration",
     "_deskfleet/command/get",
+    "scheduleList",
+    "scheduleCreate",
+    "scheduleUpdate",
+    "scheduleDelete",
+    "scheduleRun",
+    "mcpServerList",
+    "mcpServerCreate",
+    "mcpServerUpdate",
+    "mcpServerRemove",
 ];
 pub async fn rpc(
     req: HttpRequest,
@@ -366,6 +375,26 @@ pub async fn daemon_me(req: HttpRequest, s: web::Data<AppState>) -> Result<web::
     Ok(web::Json(
         json!({"machine":m.machine,"serverId":s.config.public_url}),
     ))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DelegatedUser {
+    user_id: String,
+}
+
+/// Recheck a durable user delegation against the enrolled machine's current Team.
+/// Only the machine credential selects the target; the caller cannot choose another machine.
+pub async fn authorize_delegation(
+    req: HttpRequest,
+    s: web::Data<AppState>,
+    b: web::Json<DelegatedUser>,
+) -> Result<web::Json<Value>> {
+    let machine = auth::machine(&req, &s).await?;
+    s.store
+        .authorized_machine(&b.user_id, &machine.machine.id)
+        .await?;
+    Ok(web::Json(json!({"authorized": true})))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

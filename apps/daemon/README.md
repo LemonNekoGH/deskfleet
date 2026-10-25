@@ -74,6 +74,8 @@ registration uses a fresh `machines/<uuid>/` directory, selected by the host's
 - `central.json`: private machine registration and credential.
 - `catalog.db`: SQLite Workspace/Session ownership, conversation, and audit.
 - `agent-providers.json`: machine-local provider launch settings and environment.
+- `mcp-servers.json`: additional MCP servers and their private environment/header settings.
+- `scheduled-tasks.json`: task configuration, delegated user identity, and recent run records.
 - `session-worktrees/`: ownership manifests and, by default, generated Session checkouts.
 - `terminals/`: terminal metadata and full output transcripts.
 
@@ -82,6 +84,12 @@ Retired directories stay in place because Git worktrees and saved working
 directories contain absolute paths. A reset never renames or deletes them.
 Local integer IDs remain decimal strings and are qualified by the catalog origin
 and central machine identity. Equal IDs on different machines stay distinct.
+
+Scheduled Tasks run in the daemon and remain active while the Desktop app is in
+the tray. The built-in `@deskfleet/mcp` stdio server is injected into every
+managed ACP Session; Settings → MCP Servers configures additional servers
+separately. See [Scheduled Tasks and MCP](../../agents/docs/scheduled-tasks.md)
+for timing, execution history, recovery, and delegated authorization.
 
 Desktop Settings → Preferences → This computer includes **Worktree root directory**
 for placing new Session checkouts on another disk. The preference is stored in

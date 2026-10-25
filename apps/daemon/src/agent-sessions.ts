@@ -10,6 +10,7 @@ import type { DaemonCatalog } from "./catalog.ts"
 import { AgentJournal, errorMessage, requireActiveSession, timestamp, type AgentPersistence } from "./agent-store.ts"
 import { AgentRuntime, type ResolveAgentProvider } from "./agent-runtime.ts"
 import type { AgentProviders } from "./agent-providers.ts"
+import type { AgentMcp } from "./agent-mcp.ts"
 import { GitInspection } from "./git-inspection.ts"
 import type {
   AgentActor, AgentCommand, AgentEvent, AgentInput, AgentMethod, AgentPermission, AgentReceipt, AgentSnapshot,
@@ -49,6 +50,7 @@ export class AgentSessions {
   readonly journal: AgentJournal
   readonly #catalog: DaemonCatalog
   readonly #resolveProvider: ResolveAgentProvider
+  readonly #mcp?: AgentMcp
   readonly #git = new GitInspection()
   readonly #runtimes = new Map<string, AgentRuntime>()
   readonly #operations = new Map<string, Promise<unknown>>()
@@ -60,9 +62,10 @@ export class AgentSessions {
   readonly #closing = new AbortController()
   #closed = false
 
-  constructor(catalog: DaemonCatalog, native: AgentPersistence, provider: AgentProvider = codexProvider, providers?: AgentProviders) {
+  constructor(catalog: DaemonCatalog, native: AgentPersistence, provider: AgentProvider = codexProvider, providers?: AgentProviders, mcp?: AgentMcp) {
     this.#catalog = catalog
     this.journal = new AgentJournal(native)
+    this.#mcp = mcp
     this.#resolveProvider = providers ? id => providers.resolve(id) : id => {
       if (id !== "codex") throw new Error("Agent provider is unavailable")
       return { provider, config: { name: "Codex" } }
@@ -134,7 +137,7 @@ export class AgentSessions {
     let runtime = this.#runtimes.get(sessionId)
     if (!runtime) {
       if (this.#closed) throw new Error("Agent service is stopping")
-      runtime = new AgentRuntime(this.journal, this.#catalog, this.#resolveProvider, sessionId)
+      runtime = new AgentRuntime(this.journal, this.#catalog, this.#resolveProvider, sessionId, this.#mcp)
       this.#runtimes.set(sessionId, runtime)
     }
     return runtime

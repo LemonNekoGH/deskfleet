@@ -5,6 +5,7 @@ packages:
   - apps/web
   - packages/client
   - packages/components
+  - packages/mcp
   - docs
 
 allowBuilds:

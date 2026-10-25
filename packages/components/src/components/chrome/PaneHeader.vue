@@ -8,6 +8,7 @@ import { useLayoutStore } from "../../stores/layout.ts"
 import IconButton from "../common/IconButton.vue"
 import WindowToolbar from "./WindowToolbar.vue"
 
+defineProps<{ hideDetails?: boolean }>()
 const { t } = useI18n()
 const layout = useLayoutStore()
 const { sidebarOpen, detailsOpen } = storeToRefs(layout)
@@ -20,7 +21,7 @@ const platform = platformClient.platform
     class="app-drag flex h-12 shrink-0 items-center gap-2 pr-2"
     :class="[
       !sidebarOpen && platform === 'darwin' ? 'pl-20' : 'pl-3',
-      !detailsOpen && 'titlebar-overlay-inset',
+      (hideDetails || !detailsOpen) && 'titlebar-overlay-inset',
     ]"
   >
     <WindowToolbar v-if="!sidebarOpen" />
@@ -29,6 +30,7 @@ const platform = platformClient.platform
     </div>
     <slot name="actions" />
     <IconButton
+      v-if="!hideDetails"
       :icon="PanelRight"
       :label="detailsOpen ? t('toolbar.hidePanel') : t('toolbar.showPanel')"
       @click="layout.toggleDetails()"

@@ -186,6 +186,36 @@ async fn postgres_http_permissions_replication_and_signaling() {
     assert_eq!(
         call!(
             post,
+            "/api/daemon/authorize-delegation",
+            machine_token,
+            &json!({"userId":user.id})
+        )
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        call!(
+            post,
+            "/api/daemon/authorize-delegation",
+            machine_token,
+            &json!({"userId":outside.id})
+        )
+        .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call!(
+            post,
+            "/api/daemon/authorize-delegation",
+            token,
+            &json!({"userId":user.id})
+        )
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call!(
+            post,
             "/api/daemon/catalog",
             token,
             &json!({"snapshot":{"machineId":"1"}})
@@ -322,6 +352,47 @@ async fn postgres_http_permissions_replication_and_signaling() {
         StatusCode::UNAUTHORIZED
     );
     state.hub.remove_daemon(machine_id, "fixture").await;
+    // Persistent schedule intent survives a login ending, but not Team membership removal.
+    assert_eq!(
+        call!(
+            post,
+            "/api/daemon/authorize-delegation",
+            machine_token,
+            &json!({"userId":user.id})
+        )
+        .status(),
+        StatusCode::OK
+    );
+    state
+        .store
+        .change_member(&user.id, team_id, &teammate.id, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        call!(
+            post,
+            "/api/daemon/authorize-delegation",
+            machine_token,
+            &json!({"userId":teammate.id})
+        )
+        .status(),
+        StatusCode::FORBIDDEN
+    );
+    state
+        .store
+        .revoke_machine(&user.id, machine_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        call!(
+            post,
+            "/api/daemon/authorize-delegation",
+            machine_token,
+            &json!({"userId":user.id})
+        )
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
     worker.abort();
     state.store.close().await.unwrap();
 }
