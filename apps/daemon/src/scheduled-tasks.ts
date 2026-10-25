@@ -197,7 +197,16 @@ export class ScheduledTasks {
       if (!run.sessionId || run.state === "completed" || run.state === "skipped") continue
       let snapshot: AgentSnapshot
       try { snapshot = await this.#dependencies.agents.journal.read(run.sessionId) }
-      catch { return run }
+      catch {
+        // A missing or fully archived Session cannot execute its retained input.
+        // Failed reads alone do not prove that potentially active work has stopped.
+        try {
+          const session = (await this.#dependencies.agents.journal.list()).find(session => session.id === run.sessionId)
+          if (!session || session.archiveState === "archived") continue
+        } catch { /* Keep uncertain work blocking if the catalog is also unavailable. */ }
+        return run
+      }
+      if (snapshot.session.archiveState === "archived") continue
       if (!run.inputId) {
         if (run.state === "interrupted" && (snapshot.inputs.some(input => pendingInput(input.state)) || snapshot.turns.some(turn => activeTurn(turn.state)))) return run
         continue

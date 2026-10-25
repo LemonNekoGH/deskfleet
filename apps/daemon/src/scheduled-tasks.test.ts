@@ -22,6 +22,7 @@ async function fixture(t: { after(action: () => unknown): void }) {
   let time = new Date("2026-10-26T00:00:00Z")
   let authorized = true
   let loseSubmissionResponse = false
+  let nextSessionId = 3
   const snapshots = new Map<string, AgentSnapshot>([["1", snapshot("1")], ["2", snapshot("2", "2")]])
   const commands = new Map<string, AgentCommand>()
   const calls: { method: string; params: Record<string, unknown>; actor: AgentActor }[] = []
@@ -33,12 +34,16 @@ async function fixture(t: { after(action: () => unknown): void }) {
     catalog: { native: { snapshot: async () => ({ workspaces: [{ id: "1" }, { id: "2" }] }) } },
     providers: { get: (id: string) => { if (id !== "codex") throw new Error("Provider unavailable"); return { id } } },
     agents: {
-      journal: { read: async (id: string) => { const value = snapshots.get(id); if (!value) throw new Error("Unknown Session"); return structuredClone(value) }, command: async (id: string) => commands.get(id) },
+      journal: {
+        list: async () => [...snapshots.values()].map(value => structuredClone(value.session)),
+        read: async (id: string) => { const value = snapshots.get(id); if (!value) throw new Error("Unknown Session"); return structuredClone(value) },
+        command: async (id: string) => commands.get(id),
+      },
       onEvent: (listener: (event: AgentEvent) => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
       handle: async (method: string, params: Record<string, unknown>, actor: AgentActor) => {
         calls.push({ method, params, actor })
         if (method === "_deskfleet/session/create") {
-          const result = snapshot(String(snapshots.size + 1), params.workspaceId as string)
+          const result = snapshot(String(nextSessionId++), params.workspaceId as string)
           snapshots.set(result.session.id, result)
           return result
         }
@@ -103,6 +108,76 @@ test("overlap is skipped and a long active run survives bounded history", async 
   const result = (await f.list())[0]!
   assert.ok(result.runs.some(run => run.state === "running"))
   assert.ok(result.runs.length <= 51)
+})
+
+test("archiving a retained pending run releases manual and automatic scheduled dispatch", async t => {
+  const f = await fixture(t)
+  const task = await f.create()
+  const first = await f.scheduler.handle("scheduleRun", { scheduleId: task.id }, actor) as ScheduleRun
+  const state = f.snapshots.get(first.sessionId!)!
+  for (let i = 0; i < 50; i += 1) await f.scheduler.handle("scheduleRun", { scheduleId: task.id }, actor)
+  assert.ok((await f.list())[0]!.runs.some(run => run.id === first.id))
+
+  state.session.archiveState = "archiving"
+  f.emit(first.sessionId!)
+  const closing = await f.scheduler.handle("scheduleRun", { scheduleId: task.id }, actor) as ScheduleRun
+  assert.equal(closing.state, "skipped", "Archive must finish closing resources before releasing overlap")
+  state.session.archiveState = "archived"
+  f.emit(first.sessionId!)
+  assert.equal((await f.list())[0]!.runs.find(run => run.id === first.id)?.state, "interrupted")
+  const manual = await f.scheduler.handle("scheduleRun", { scheduleId: task.id }, actor) as ScheduleRun
+  assert.equal(manual.state, "running")
+  assert.notEqual(manual.sessionId, first.sessionId)
+  assert.equal(state.inputs[0]!.state, "pending", "Archive preserves the original backlog")
+  assert.equal((await f.list())[0]!.runs.length, 50, "The archived anchor no longer needs retention")
+
+  f.snapshots.get(manual.sessionId!)!.session.archiveState = "archived"
+  f.emit(manual.sessionId!)
+  f.setTime(task.nextRunAt!)
+  await f.scheduler.tick()
+  const automatic = (await f.list())[0]!.lastRun!
+  assert.equal(automatic.state, "running")
+  assert.notEqual(automatic.sessionId, manual.sessionId)
+  assert.equal(f.calls.length, 6)
+})
+
+test("restoring an archived Session with pending input prevents overlapping scheduled dispatch", async t => {
+  const f = await fixture(t)
+  const task = await f.create()
+  const run = await f.scheduler.handle("scheduleRun", { scheduleId: task.id }, actor) as ScheduleRun
+  const state = f.snapshots.get(run.sessionId!)!
+  state.session.archiveState = "archived"
+  f.emit(run.sessionId!)
+  assert.equal((await f.list())[0]!.lastRun?.state, "interrupted")
+  state.session.archiveState = "active"
+  f.emit(run.sessionId!)
+  const next = await f.scheduler.handle("scheduleRun", { scheduleId: task.id }, actor) as ScheduleRun
+  assert.equal(next.state, "skipped")
+  assert.equal(f.calls.length, 2)
+})
+
+test("unreadable active Sessions block overlap but missing Sessions do not", async t => {
+  const f = await fixture(t)
+  const task = await f.create()
+  const run = await f.scheduler.handle("scheduleRun", { scheduleId: task.id }, actor) as ScheduleRun
+  const journal = f.dependencies.agents.journal
+  const read = journal.read.bind(journal)
+  const list = journal.list.bind(journal)
+  journal.read = async id => {
+    if (id === run.sessionId) throw new Error("Snapshot is unavailable")
+    return read(id)
+  }
+  const unreadable = await f.scheduler.handle("scheduleRun", { scheduleId: task.id }, actor) as ScheduleRun
+  assert.equal(unreadable.state, "skipped")
+  journal.list = async () => { throw new Error("Journal is unavailable") }
+  const unavailable = await f.scheduler.handle("scheduleRun", { scheduleId: task.id }, actor) as ScheduleRun
+  assert.equal(unavailable.state, "skipped")
+  journal.list = list
+  f.snapshots.delete(run.sessionId!)
+  const next = await f.scheduler.handle("scheduleRun", { scheduleId: task.id }, actor) as ScheduleRun
+  assert.equal(next.state, "running")
+  assert.notEqual(next.sessionId, run.sessionId)
+  assert.equal(f.calls.length, 4)
 })
 
 test("retried scheduled inputs track the current turn through completion", async t => {

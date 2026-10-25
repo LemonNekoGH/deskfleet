@@ -21,6 +21,14 @@ const kind = computed({
         : { kind: value, time: rememberedTime.value, timeZone: rememberedZone.value, ...(value === "weekly" ? { weekdays: [1] } : {}) } as ScheduleInput["trigger"]
   },
 })
+const time = computed({
+  get: () => trigger.value.kind === "daily" || trigger.value.kind === "weekly" ? trigger.value.time : "",
+  set: (value: string) => {
+    if (trigger.value.kind !== "daily" && trigger.value.kind !== "weekly") return
+    // Browser time controls may include seconds; schedules use minute precision.
+    trigger.value = { ...trigger.value, time: value.slice(0, 5) }
+  },
+})
 const weekdays = computed(() => Array.from({ length: 7 }, (_, index) => ({
   value: (index + 1) % 7,
   name: new Intl.DateTimeFormat(locale.value, { weekday: "short", timeZone: "UTC" }).format(new Date(Date.UTC(2026, 0, 5 + index))),
@@ -47,7 +55,7 @@ function toggleDay(day: number): void {
     <template v-if="trigger.kind === 'daily' || trigger.kind === 'weekly'">
       <label class="ui-setting flex min-h-14 flex-wrap items-center justify-between gap-3 px-4 py-3">
         <span class="text-ui-text-muted">{{ t('schedules.at') }}</span>
-        <input v-model="trigger.time" name="schedule-time" type="time" required class="ui-input w-auto" :disabled="disabled" />
+        <input v-model="time" name="schedule-time" type="time" step="60" required class="ui-input w-auto" :disabled="disabled" />
       </label>
       <label class="ui-setting flex min-h-14 flex-wrap items-center justify-between gap-3 px-4 py-3">
         <span class="text-ui-text-muted">{{ t('schedules.timeZone') }}</span>

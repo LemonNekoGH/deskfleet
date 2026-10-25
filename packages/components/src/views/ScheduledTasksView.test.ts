@@ -183,6 +183,24 @@ test("weekly timing rejects an invalid time zone and saves selected weekdays wit
   expect(rpc).toHaveBeenCalledWith("machine-1", "scheduleUpdate", expect.objectContaining({ changes: expect.objectContaining({ trigger: { kind: "weekly", time: "14:30", timeZone: "Europe/London", weekdays: [1] } }) }))
 })
 
+test.each([
+  ["daily", "14:30:00"], ["weekly", "14:30:00"],
+  ["daily", "14:30"], ["weekly", "14:30"],
+] as const)("saves %s browser time %s at minute precision", async (kind, value) => {
+  const { wrapper, rpc } = await setup([task()])
+  await wrapper.get('[data-schedule-id="schedule-1"]').trigger("click")
+  await wrapper.get('[name="schedule-repeat"]').setValue(kind)
+  const control = wrapper.get('[name="schedule-time"]')
+  // Preserve the browser payload; happy-dom otherwise strips zero seconds.
+  Object.defineProperty(control.element, "value", { configurable: true, writable: true, value })
+  await control.trigger("input")
+  await wrapper.get("form").trigger("submit")
+  await flushPromises()
+  expect(rpc).toHaveBeenCalledWith("machine-1", "scheduleUpdate", expect.objectContaining({ changes: expect.objectContaining({
+    trigger: { kind, time: "14:30", timeZone: "Asia/Singapore", ...(kind === "weekly" ? { weekdays: [1] } : {}) },
+  }) }))
+})
+
 test("an offline transition disables actions and rejects a late list response", async () => {
   const { wrapper, rpc, account } = await setup([task()])
   await wrapper.get('[data-schedule-id="schedule-1"]').trigger("click")

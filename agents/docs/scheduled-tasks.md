@@ -39,6 +39,9 @@ flow as an interactive user. It never answers a permission or user question.
 An existing Session receives an ordinary backlog input. If an earlier input
 from the same task remains active or uncertain, another occurrence is recorded
 as skipped rather than creating overlapping scheduled work.
+Once a Session finishes archiving, its retained inputs no longer block later
+occurrences. Restoring it makes any still-pending input count toward overlap
+again. A Session still closing during archive continues to block dispatch.
 
 Recent runs record claim/running/completed/failed/interrupted/skipped state,
 timestamps, associated Session and input IDs, and errors. Completion follows
