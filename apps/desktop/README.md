@@ -146,8 +146,11 @@ describes its target Workspace.
 ## Agent sessions
 
 Settings → Agents manages the machine's configured providers, including their
-names, icons, executable paths, and environment overrides. The Codex and Claude
-Code templates use their installed and authenticated CLIs through bundled ACP adapters.
+names, icons, executable paths, and environment overrides. The Codex, Claude
+Code, and Pi Coding Agent templates use their installed and authenticated CLIs
+through bundled ACP adapters. Pi setup opens its terminal interface: enter
+`/login`, complete authentication, then `/quit`. Pi supports model and reasoning
+selection and resuming saved sessions.
 The Cursor template runs the installed Cursor CLI as `agent acp`.
 The Grok template runs the installed Grok CLI as `grok agent stdio`.
 Their multiple-choice questions use the session question cards.
@@ -225,13 +228,15 @@ authorized remote signaling.
 ## Desktop playback
 
 With the local Agent running, open **Remote control → Desktop** under the real
-local machine. Select a display, then connect. The viewer uses the first of H.264,
-HEVC, and AV1 that both the display's encoder and Chromium support, shows that
+local machine. Select a display, then connect. The viewer uses the first of AV1,
+HEVC, and H.264 that both the display's encoder and Chromium support, shows that
 codec as status text, and opens a new peer for the next codec only when the
 encoder fails. System audio is optional and defaults off.
 The video surface hides Chromium's playback controls; the page provides its own
-fullscreen action. Switching tools keeps capture connected; disconnect or leave
-the Remote control page to release it. The daemon keeps running.
+fullscreen toggle, keeping the floating toolbar available in fullscreen.
+Switching away from the Desktop tab disconnects capture while preserving its
+display and stream settings. Returning to Desktop requires reconnecting manually.
+Leaving the Remote control page also releases capture. The daemon keeps running.
 
 Electron's main process discovers the local daemon through
 `~/.deskfleet/daemon.json`. Set `DESKFLEET_DAEMON_DIRECTORY` in both processes to
@@ -416,7 +421,9 @@ loopback Vite URL. Each build injects its Content Security Policy into
 `index.html`. Production builds forbid renderer HTTP/WebSocket connections;
 WebRTC carries peer media and a narrow preload API carries authorized central signaling. The
 media policy permits local streams.
-The window denies new windows, navigation, and Chromium permission requests.
+The window denies new windows and navigation. Chromium permissions allow only
+clipboard writes and fullscreen from the main renderer document; clipboard reads
+and all other permission requests remain denied.
 Routing uses hash history so every route stays on the single bundled document.
 
 ## Vue rendering
@@ -439,8 +446,8 @@ mise run desktop:package      # dmg and zip, NSIS, or AppImage for the host plat
 to the main bundle and unpacked from ASAR for loading; installer builds use the
 release addon. The app has no runtime `node_modules` or external Node dependency.
 The app's main process hosts the daemon. The same installed executable runs the
-bundled Codex and Claude Code ACP adapters with `--codex-acp` and
-`--claude-agent-acp` in Electron's Node mode. The `RunAsNode` fuse stays enabled
+bundled Codex, Claude Code, and Pi ACP adapters with `--codex-acp`,
+`--claude-agent-acp`, and `--pi-acp` in Electron's Node mode. The `RunAsNode` fuse stays enabled
 for those adapter processes. Packages enable ASAR
 integrity validation and disable the `NODE_OPTIONS` and `--inspect` fuses.
 electron-builder signs macOS builds when it finds a signing identity; set
@@ -488,7 +495,7 @@ returning to the session, live staged/unstaged/untracked diff previews, and hist
 recovery after restarting both daemon and client. It edits a file while its diff
 is open to verify live updates independent of provider events. The startup smoke
 checks entry-point routing and starts the bundled
-Codex and Claude Code adapters without paid inference.
+Codex, Claude Code, and Pi adapters without paid inference.
 
 vue-tsc uses the TypeScript compiler API, which TypeScript 7 does not provide. The
 package therefore installs TypeScript 6 under the `typescript` name. The root
