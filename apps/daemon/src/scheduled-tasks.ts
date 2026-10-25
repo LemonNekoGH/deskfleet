@@ -316,7 +316,23 @@ export class ScheduledTasks {
       const run = tasks.find(task => task.id === taskId)?.runs.find(run => run.id === runId)
       if (!run || !["running", "failed", "interrupted"].includes(run.state) || !run.sessionId || !run.inputId) return
       const previous = JSON.stringify(run)
-      const snapshot = await this.#dependencies.agents.journal.read(run.sessionId)
+      let snapshot: AgentSnapshot
+      try { snapshot = await this.#dependencies.agents.journal.read(run.sessionId) }
+      catch {
+        // A missing or fully archived Session cannot execute its retained input.
+        // Failed reads alone do not prove that potentially active work has stopped.
+        try {
+          const session = (await this.#dependencies.agents.journal.list()).find(session => session.id === run.sessionId)
+          if (session && session.archiveState !== "archived") return
+          if (run.state !== "running") return
+          run.state = "interrupted"
+          run.error = session ? "Scheduled Session was archived" : "Scheduled Session was not found"
+          run.finishedAt ??= this.#now().toISOString()
+        } catch { return }
+        if (JSON.stringify(run) === previous) return
+        await this.#save(tasks)
+        return
+      }
       const input = snapshot.inputs.find(input => input.id === run.inputId)
       const turn = snapshot.turns.find(turn => turn.id === input?.turnId)
         ?? snapshot.turns.findLast(turn => turn.initialInputId === run.inputId)

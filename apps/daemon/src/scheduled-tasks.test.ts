@@ -267,6 +267,47 @@ test("targets are scoped to an immutable Workspace and latest author owns future
   assert.equal(f.calls[0]!.params.sessionId, "1")
 })
 
+test("restart releases a missing Session and keeps a running record when the catalog is unavailable", async t => {
+  const f = await fixture(t)
+  const missing = await f.create({ title: "Missing", trigger: { kind: "manual" } })
+  const healthy = await f.create({ title: "Healthy", trigger: { kind: "manual" } })
+  const stale = await f.scheduler.handle("scheduleRun", { scheduleId: missing.id }, actor) as ScheduleRun
+  const active = await f.scheduler.handle("scheduleRun", { scheduleId: healthy.id }, actor) as ScheduleRun
+  await f.scheduler.close()
+
+  const journal = f.dependencies.agents.journal
+  const read = journal.read.bind(journal)
+  const list = journal.list.bind(journal)
+  journal.read = async () => { throw new Error("Journal is unavailable") }
+  journal.list = async () => { throw new Error("Journal is unavailable") }
+  const uncertain = new ScheduledTasks(f.directory, f.dependencies)
+  t.after(() => uncertain.close())
+  await uncertain.init()
+  const blocked = await uncertain.handle("scheduleList", {}, actor) as ScheduledTask[]
+  assert.equal(blocked.find(task => task.id === missing.id)!.lastRun?.state, "running")
+  assert.equal(blocked.find(task => task.id === healthy.id)!.lastRun?.state, "running")
+  const skipped = await uncertain.handle("scheduleRun", { scheduleId: missing.id }, actor) as ScheduleRun
+  assert.equal(skipped.state, "skipped")
+  await uncertain.close()
+
+  journal.read = read
+  journal.list = list
+  f.snapshots.delete(stale.sessionId!)
+  const reopened = new ScheduledTasks(f.directory, f.dependencies)
+  t.after(() => reopened.close())
+  await reopened.init()
+  const released = await reopened.handle("scheduleList", {}, actor) as ScheduledTask[]
+  const interrupted = released.find(task => task.id === missing.id)!.runs.find(run => run.id === stale.id)
+  assert.equal(interrupted?.state, "interrupted")
+  assert.equal(interrupted?.error, "Scheduled Session was not found")
+  assert.equal(released.find(task => task.id === healthy.id)!.runs.find(run => run.id === active.id)?.state, "running")
+  const next = await reopened.handle("scheduleRun", { scheduleId: missing.id }, actor) as ScheduleRun
+  assert.equal(next.state, "running")
+  assert.notEqual(next.sessionId, stale.sessionId)
+  const overlap = await reopened.handle("scheduleRun", { scheduleId: healthy.id }, actor) as ScheduleRun
+  assert.equal(overlap.state, "skipped")
+})
+
 test("restart recovers a committed input receipt without resubmitting it", async t => {
   const f = await fixture(t)
   const task = await f.create()

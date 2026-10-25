@@ -51,7 +51,11 @@ needed to prevent overlap. Provider removal, an archived target, failed
 provisioning, and authorization failures appear in run history.
 
 Restart recovery inspects durable command receipts and the recovered Agent
-journal. It never automatically repeats an uncertain prompt submission.
+journal. It never automatically repeats an uncertain prompt submission. A
+running record whose Session cannot be read is marked interrupted when the
+catalog shows that Session is missing or fully archived, so startup continues.
+If the catalog is unavailable as well, the record stays running and still
+blocks a later occurrence.
 Pending or uncertain inputs remain subject to the existing Session recovery
 workflow. A failed authorization or dispatch advances the automatic schedule;
 there is no hidden retry loop.
