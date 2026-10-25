@@ -40,8 +40,75 @@ let nextSession = 0
 let authenticated = false
 let authMethod: string | undefined
 let authHeadless: unknown
+let parameterizedModelPicker = false
+let cursorModel = "composer-2.5"
+let cursorEffort = "high"
+let grokModel = "grok-4.5"
+let grokEffort: string | undefined
 const cursorMode = mode === "cursor" || mode === "cursor-test" || mode === "cursor-test-signed-out"
+const grokEffortMode = mode === "grok-effort"
 const grokMode = mode === "grok" || mode === "grok-cached" || mode === "grok-login"
+const grokReasoning = [
+  { id: "low", label: "Low", description: "Faster replies" },
+  { id: "medium", label: "Medium" },
+  { id: "high", label: "High", default: true },
+]
+function cursorConfigOptions(): acp.SessionConfigOption[] {
+  if (!parameterizedModelPicker) {
+    return [{
+      id: "model", category: "model", name: "Model", type: "select", currentValue: `${cursorModel}[fast=true]`,
+      options: [
+        { value: "composer-2.5[fast=true]", name: "Composer 2.5 Fast" },
+        { value: "grok-4.6[effort=high,fast=true]", name: "Grok 4.6 Fast" },
+      ],
+    }]
+  }
+  return [
+    {
+      id: "model", category: "model", name: "Model", type: "select", currentValue: cursorModel,
+      options: [{ value: "composer-2.5", name: "Composer 2.5" }, { value: "grok-4.6", name: "Grok 4.6" }],
+    },
+    {
+      id: "effort", category: "thought_level", name: "Reasoning", type: "select", currentValue: cursorEffort,
+      options: ["low", "medium", "high", "xhigh"].map(value => ({ value, name: value })),
+    },
+    { id: "fast", category: "model_config", name: "Fast", type: "boolean", currentValue: true },
+  ]
+}
+function grokCatalog(): { currentModelId: string; availableModels: Array<{ modelId: string; name: string; _meta: Record<string, unknown> }> } {
+  return {
+    currentModelId: grokModel,
+    availableModels: [
+      {
+        modelId: "grok-4.5", name: "Grok 4.5",
+        _meta: {
+          supportsReasoningEffort: true,
+          reasoningEffort: grokModel === "grok-4.5" && grokEffort ? grokEffort : "high",
+          reasoningEfforts: grokReasoning,
+        },
+      },
+      { modelId: "grok-fast", name: "Grok Fast", _meta: { supportsReasoningEffort: false, reasoningEfforts: [] } },
+    ],
+  }
+}
+function grokSessionMeta(authenticatedSession = false): Record<string, unknown> {
+  return {
+    ...(authenticatedSession ? { authenticated, authMethod, headless: authHeadless } : {}),
+    models: grokCatalog(),
+    "x.ai/sessionConfig": {
+      options: [
+        {
+          id: "model", name: "Model", category: "model", type: "select", currentValue: grokModel,
+          options: [{ value: "grok-4.5", name: "Grok 4.5" }, { value: "grok-fast", name: "Grok Fast" }],
+        },
+        {
+          id: "reasoning_effort", name: "Reasoning", category: "mode", type: "select", currentValue: "xhigh",
+          options: [{ value: "xhigh", name: "Stale extra high" }],
+        },
+      ],
+    },
+  }
+}
 function grokAuthMethods(): acp.AuthMethod[] {
   if (mode === "grok") return [{ id: "xai.api_key", name: "xai.api_key" }, { id: "cached_token", name: "cached_token" }]
   if (mode === "grok-cached") return [{ id: "cached_token", name: "cached_token" }]
@@ -51,6 +118,7 @@ const connection = acp.agent({ name: "deskfleet-test-agent" })
   .onRequest(acp.methods.agent.initialize, async ({ params }) => {
     if (mode === "wait-init") await new Promise(() => {})
     if (mode === "exit-init") process.exit(12)
+    parameterizedModelPicker = params.clientCapabilities?._meta?.parameterizedModelPicker === true
     return {
       protocolVersion: acp.PROTOCOL_VERSION + (mode === "wrong-version" ? 1 : 0),
       agentInfo: { name: cursorMode ? "cursor-agent" : grokMode ? "grok" : "deskfleet-test-agent", version: "1.0.0" },
@@ -88,8 +156,13 @@ const connection = acp.agent({ name: "deskfleet-test-agent" })
     if (mode === "wait-session") await new Promise(() => {})
     if (mode === "session-error") throw acp.RequestError.internalError({ details: `fixture cannot open ${params.cwd}` })
     if (cursorMode && mode !== "cursor-test" && !authenticated) throw acp.RequestError.internalError({ details: "authenticate required" })
+    const sessionId = `fixture-session-${++nextSession}`
+    if (grokEffortMode) {
+      return { sessionId, models: grokCatalog(), _meta: { request: params, ...grokSessionMeta() } }
+    }
     return {
-      sessionId: `fixture-session-${++nextSession}`,
+      sessionId,
+      ...(cursorMode ? { configOptions: cursorConfigOptions() } : {}),
       _meta: {
         request: params,
         ...(cursorMode ? { authenticated } : {}),
@@ -108,15 +181,37 @@ const connection = acp.agent({ name: "deskfleet-test-agent" })
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "config_option_update",
-          configOptions: [{ id: "model", category: "model", name: "Model", type: "select", currentValue: "composer", options: [{ value: "composer", name: "Composer" }] }],
+          configOptions: cursorConfigOptions(),
         },
       })
     }
     return { _meta: { method: "session/load", request: params } }
   })
-  .onRequest(acp.methods.agent.session.setConfigOption, ({ params }) => ({
-    configOptions: [{ id: params.configId, category: "model", name: "Model", type: "select", currentValue: String(params.value), options: [{ value: String(params.value), name: "Model" }] }],
-  }))
+  .onRequest(acp.methods.agent.session.setConfigOption, ({ params }) => {
+    if (cursorMode && (params.configId === "model" || params.configId === "effort") && typeof params.value === "string") {
+      if (params.configId === "model") cursorModel = params.value
+      else cursorEffort = params.value
+      return { configOptions: cursorConfigOptions() }
+    }
+    return {
+      configOptions: [{ id: params.configId, category: "model", name: "Model", type: "select", currentValue: String(params.value), options: [{ value: String(params.value), name: "Model" }] }],
+    }
+  })
+  .onRequest(acp.methods.agent.session.setMode, ({ params }) => {
+    if (!grokEffortMode) throw acp.RequestError.methodNotFound("session/set_mode")
+    grokEffort = params.modeId
+    return {}
+  })
+  .onRequest("session/set_model", (params: unknown) => {
+    if (!params || typeof params !== "object") throw new Error("invalid set_model")
+    return params as { sessionId: string; modelId: string }
+  }, ({ params }) => {
+    if (!grokEffortMode) throw acp.RequestError.methodNotFound("session/set_model")
+    if (params.modelId !== "grok-4.5" && params.modelId !== "grok-fast") throw acp.RequestError.invalidParams({ details: "unknown model" })
+    grokModel = params.modelId
+    grokEffort = undefined
+    return { models: grokCatalog(), _meta: grokSessionMeta() }
+  })
   .onRequest(acp.methods.agent.session.resume, ({ params }) => ({ _meta: { request: params } }))
   .onRequest(acp.methods.agent.session.prompt, async ({ params, client }) => {
     const pending = mode === "wait" || mode?.startsWith("steer-")

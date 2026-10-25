@@ -96,6 +96,30 @@ test("opens a compact configuration menu and dynamically populates checked subme
   expect(view.find("select").exists()).toBe(false)
 })
 
+test("enables reasoning when the selected model advertises effort levels", async () => {
+  const providers = useProvidersStore()
+  providers.providers = [{ id: "cursor", name: "Cursor", template: "cursor" }, { id: "grok", name: "Grok", template: "grok" }]
+  providers.selectedId = "cursor"
+  const cursor = {
+    provider: { id: "cursor", name: "Cursor" },
+    models: { id: "model", currentValue: "grok-4.6", options: [{ id: "grok-4.6", name: "Grok 4.6" }, { id: "composer-2.5", name: "Composer 2.5" }] },
+    reasoningEfforts: { id: "effort", currentValue: "high", options: [{ id: "low", name: "Low" }, { id: "high", name: "High", description: "Deeper reasoning" }] },
+    modes: null,
+  }
+  const api = vi.mocked(agents.agentConfiguration).mockResolvedValue(cursor)
+  const view = render()
+  await trigger(view).trigger("click")
+  await flushPromises()
+  expect(row(view, "reasoning").attributes("disabled")).toBeUndefined()
+  expect(row(view, "reasoning").text()).toBe("ReasoningHigh")
+  expect(row(view, "mode").attributes("disabled")).toBeDefined()
+  await row(view, "reasoning").trigger("click")
+  expect(options(view).map(option => option.text()).join("\n")).toContain("Deeper reasoning")
+  await view.get('[role="menuitemradio"][data-value="low"]').trigger("click")
+  await flushPromises()
+  expect(api).toHaveBeenLastCalledWith(expect.objectContaining({ provider: "cursor", reasoningEffort: "low", workspaceId: "11" }))
+})
+
 test("changes a model before offering its supported reasoning choices", async () => {
   const view = render(); await trigger(view).trigger("click"); await flushPromises()
   const next = { ...configuration("orbit"), reasoningEfforts: { id: "reasoning_effort", currentValue: "minimal", options: [{ id: "minimal", name: "Minimal" }, { id: "careful", name: "Agent careful" }] } }

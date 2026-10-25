@@ -162,7 +162,7 @@ archived; they do not expose a usable Worktree.
 Click the Agent summary in the composer to open a menu with Agent, Model, and
 Reasoning rows. Each row opens a submenu of choices with the current choice
 checked. The Agent submenu selects a configured provider for a new Session;
-model and effort choices come from that provider's ACP configuration options.
+model and effort choices come from that provider's ACP configuration options, including reasoning levels the selected model advertises.
 New-session selections are
 remembered on the device and applied before the first prompt. In an existing
 Session, the menu reads and updates that Session's provider configuration.

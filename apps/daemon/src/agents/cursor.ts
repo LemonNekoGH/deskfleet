@@ -30,6 +30,8 @@ export const cursorProvider: AgentProvider = {
     // session/new also accepts credentials loaded at startup, without that call.
     return connectAcpProcess(cursorProcess(config), client, {
       ...(config.authentication === "existing" ? {} : { afterInitialize: authenticateCursor }),
+      // Without this, Cursor folds reasoning into one variant id per model and advertises no effort control.
+      clientCapabilities: { _meta: { parameterizedModelPicker: true } },
     })
   },
 }

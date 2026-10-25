@@ -69,6 +69,30 @@ test("agent configuration comes from ACP, flattens groups, and applies model bef
   assert.equal(fake.closed, 1)
 })
 
+test("reasoning effort applies when its option id is effort and it has no category", async () => {
+  const choices = (effort = "high"): acp.SessionConfigOption[] => [{
+    id: "model", category: "model", name: "Model", type: "select", currentValue: "first",
+    options: [{ value: "first", name: "First" }],
+  }, {
+    id: "effort", name: "Reasoning", type: "select", currentValue: effort,
+    options: ["low", "medium", "high"].map(value => ({ value, name: value })),
+  }]
+  let effort = "high"
+  const fake = fakeProvider({
+    async newSession() { return { sessionId: "draft", configOptions: choices() } },
+    async setConfigOption(params) {
+      assert.equal(params.configId, "effort")
+      assert.equal(params.value, "low")
+      effort = "low"
+      return { configOptions: choices(effort) }
+    },
+  })
+  const result = await readAgentConfiguration({ provider: "codex", reasoningEffort: "low" }, process.cwd(), fake)
+  assert.equal(result.reasoningEfforts?.id, "effort")
+  assert.equal(result.reasoningEfforts?.currentValue, "low")
+  assert.equal(fake.closed, 1)
+})
+
 test("model change uses the provider's new effort choices and default", async () => {
   const fake = fakeProvider()
   const result = await readAgentConfiguration({ provider: "codex", model: "second" }, process.cwd(), fake)

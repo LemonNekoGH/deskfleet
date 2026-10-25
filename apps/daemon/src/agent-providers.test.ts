@@ -5,6 +5,7 @@ import { join } from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 import type * as acp from "@agentclientprotocol/sdk"
+import { agentConfiguration } from "./agent-configuration-protocol.ts"
 import { AgentProviders } from "./agent-providers.ts"
 import { configureAdapterHost } from "./agents/adapter-host.ts"
 import { validateControlParams } from "./control-request.ts"
@@ -169,8 +170,13 @@ test("Cursor launches agent acp, authenticates, and continues through session/lo
   assert.equal(connection.initialization.agentCapabilities?.loadSession, true)
   assert.equal(connection.initialization.agentCapabilities?.sessionCapabilities?.resume, undefined)
   assert.deepEqual((connection.initialization._meta?.launch as { args?: string[] }).args, ["acp"])
+  assert.equal((connection.initialization._meta?.clientCapabilities as { _meta?: { parameterizedModelPicker?: boolean } } | undefined)?._meta?.parameterizedModelPicker, true)
   const created = await connection.newSession({ cwd: directory, mcpServers: [] })
   assert.equal(created._meta?.authenticated, true)
+  const discovered = agentConfiguration(created.configOptions ?? [], { id: "cursor", name: "Cursor" })
+  assert.deepEqual(discovered.reasoningEfforts?.options.map(option => option.id), ["low", "medium", "high", "xhigh"])
+  const changed = await connection.setConfigOption({ sessionId: created.sessionId, configId: "effort", value: "low" }, created.configOptions ?? undefined)
+  assert.equal(agentConfiguration(changed.configOptions).reasoningEfforts?.currentValue, "low")
   const loaded = await connection.resume({ cwd: directory, mcpServers: [], sessionId: created.sessionId })
   assert.equal(loaded._meta?.method, "session/load")
   assert.deepEqual(updates.map(update => update.update.sessionUpdate), ["config_option_update"])

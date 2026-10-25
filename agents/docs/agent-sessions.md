@@ -488,8 +488,8 @@ Provider capabilities determine which controls are available:
 | --- | --- | --- |
 | Codex | The bundled adapter offers Read-only, Workspace access, Auto review (Approve for Me), and Full access through its mode option. | Uses the advertised model option. |
 | Claude Code | The bundled adapter offers Manual, Accept edits, Plan, Auto, and Bypass permissions where available. Auto can fall back for an unsupported model. | Uses the advertised model option; the returned configuration can also change the effective mode. |
-| Cursor | Uses advertised ACP modes, including its documented Agent, Plan, and Ask workflows. These are not its Auto-review permission setting. | Uses model choices advertised by the installed CLI; available choices and model variants depend on that CLI version. |
-| Grok | Current upstream session setup advertises no mode catalog. Its startup Auto/YOLO settings are not exposed as a Session mode selector. | Its model and reasoning configuration options support changes. |
+| Cursor | Uses advertised ACP modes, including its documented Agent, Plan, and Ask workflows. These are not its Auto-review permission setting. | Uses model choices advertised by the installed CLI. Initialization requests parameterized model options so reasoning effort is separate from fast variants. Available choices depend on that CLI version. |
+| Grok | Current upstream session setup advertises no mode catalog. Its startup Auto/YOLO settings are not exposed as a Session mode selector. Reasoning levels carried beside the model are not Session modes. | Model and reasoning options support changes. A model that does not advertise adjustable effort leaves the reasoning control unavailable. |
 
 These are integration observations, not hardcoded option lists. See
 [Codex permission modes](https://learn.chatgpt.com/docs/permission-modes),
@@ -499,6 +499,20 @@ These are integration observations, not hardcoded option lists. See
 and [Auto-review limitation](https://forum.cursor.com/t/acp-agent-doesnt-use-auto-review/171082),
 and Grok's [session setup](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-shell/src/agent/mvp_agent/session_setup.rs)
 and [configuration handler](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-shell/src/agent/handlers/config_option.rs).
+
+Cursor initialization advertises `clientCapabilities._meta.parameterizedModelPicker`.
+When the CLI honors it, reasoning effort is a `thought_level` option and changes
+with `session/set_config_option`. Fast remains a model setting. Grok uses that
+same option when it advertises one (`reasoning_effort`, `effort`,
+`thinking_intensity`, or `thinking_level`, with or without `thought_level`).
+Older Grok sessions omit config options and report levels on
+`models.availableModels` (`supportsReasoningEffort` and `reasoningEfforts`, or
+the thinking-intensity aliases) or on `x.ai/sessionConfig` rows whose category
+is `mode`. Deskfleet projects those levels into the reasoning control. A
+projected effort change calls `session/set_mode`; a projected model change
+calls `session/set_model`. Those metadata rows are not permission modes. An
+explicit `supportsReasoningEffort: false`, or an empty effort list, leaves the
+control unavailable instead of reusing a stale catalog.
 
 New Session commands carry optional model, reasoning, and mode selections. Startup
 applies the model first, then an effort and mode supported by that model, before draining

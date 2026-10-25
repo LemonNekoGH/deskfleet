@@ -2,6 +2,7 @@ import { spawn } from "node:child_process"
 import { Readable, Writable } from "node:stream"
 import * as acp from "@agentclientprotocol/sdk"
 import { answerVendorQuestion, VENDOR_QUESTION_METHODS } from "./questions.ts"
+import { AcpModelReasoning } from "./reasoning-effort.ts"
 import { AcpSessionModes } from "./session-modes.ts"
 
 export interface AgentConfig {
@@ -68,12 +69,25 @@ export function canContinueSession(initialization: acp.InitializeResponse): bool
 export interface AcpConnectOptions {
   /** Runs after version negotiation, before callers can create a session. */
   afterInitialize?(initialization: acp.InitializeResponse, agent: acp.ClientContext): Promise<void>
+  /** Merged into initialize `clientCapabilities`. Elicitation is added when the client handles forms. */
+  clientCapabilities?: acp.ClientCapabilities
+}
+
+function choiceValues(option: acp.SessionConfigOption | undefined): string[] {
+  if (!option || option.type !== "select") return []
+  return option.options.flatMap(value => "group" in value ? value.options : [value]).map(value => value.value)
+}
+
+function withModelValue(options: acp.SessionConfigOption[], modelId: string): acp.SessionConfigOption[] {
+  return options.map(option => option.type === "select" && (option.category === "model" || option.id === "model")
+    ? { ...option, currentValue: modelId } : option)
 }
 
 export async function connectAcpProcess(launch: AgentProcess, client: AgentClient, options: AcpConnectOptions = {}): Promise<AgentConnection> {
   client.signal?.throwIfAborted()
   let replayingHistory = false
   const sessionModes = new AcpSessionModes()
+  const reasoning = new AcpModelReasoning()
   const child = spawn(launch.command, launch.args ?? [], {
     env: Object.fromEntries(
       [...Object.entries(process.env), ...Object.entries(launch.env ?? {})]
@@ -91,7 +105,16 @@ export async function connectAcpProcess(launch: AgentProcess, client: AgentClien
       // the replay and is clear before any later notification is read.
       if (replayingHistory && params.update.sessionUpdate !== "config_option_update" && params.update.sessionUpdate !== "current_mode_update") return
       try {
-        await client.onUpdate(sessionModes.notification(params))
+        const notified = sessionModes.notification(params)
+        if (notified.update.sessionUpdate !== "config_option_update") {
+          await client.onUpdate(notified)
+        } else {
+          const projected = reasoning.project({ configOptions: notified.update.configOptions })
+          await client.onUpdate(projected.configOptions === notified.update.configOptions ? notified : {
+            ...notified,
+            update: { sessionUpdate: "config_option_update", configOptions: projected.configOptions ?? [] },
+          })
+        }
       } catch (error) {
         connection.close(error)
       }
@@ -171,30 +194,65 @@ export async function connectAcpProcess(launch: AgentProcess, client: AgentClien
     const initialization = await connection.agent.request(acp.methods.agent.initialize, {
       protocolVersion: acp.PROTOCOL_VERSION,
       clientInfo: { name: "deskfleet", version: "0.1.0" },
-      clientCapabilities: client.requestElicitation ? { elicitation: { form: {} } } : {},
+      clientCapabilities: {
+        ...options.clientCapabilities,
+        ...(client.requestElicitation ? { elicitation: { form: {} } } : {}),
+      },
     })
     if (initialization.protocolVersion !== acp.PROTOCOL_VERSION) {
       throw new Error(`${launch.command} uses unsupported ACP protocol version ${initialization.protocolVersion}`)
     }
     await options.afterInitialize?.(initialization, connection.agent)
+    const present = <T extends acp.NewSessionResponse | acp.LoadSessionResponse | acp.SetSessionConfigOptionResponse>(
+      sessionId: string, response: T,
+    ): T => {
+      reasoning.remember(response)
+      return reasoning.project(sessionModes.response(sessionId, response))
+    }
     return {
       initialization,
       async newSession(params) {
         const created = await connection.agent.request(acp.methods.agent.session.new, params)
         rememberSession(created.sessionId)
-        return sessionModes.response(created.sessionId, created)
+        return present(created.sessionId, created)
       },
-      setConfigOption: (params, knownOptions) => sessionModes.setConfigOption(
-        params,
-        request => connection.agent.request(acp.methods.agent.session.setMode, request),
-        request => connection.agent.request(acp.methods.agent.session.setConfigOption, request),
-        knownOptions,
-      ),
+      async setConfigOption(params, knownOptions) {
+        const current = reasoning.listed(knownOptions) ?? []
+        const kind = reasoning.kind(params.configId, current)
+        if (kind === "effort" || kind === "model") {
+          if (typeof params.value !== "string") throw new Error(`The Agent does not offer this ${kind === "effort" ? "reasoning effort" : "model"}`)
+          const option = current.find(option => option.id === params.configId)
+          if (!choiceValues(option).includes(params.value)) {
+            throw new Error(`The Agent does not offer this ${kind === "effort" ? "reasoning effort" : "model"}`)
+          }
+          if (kind === "effort") {
+            await connection.agent.request(acp.methods.agent.session.setMode, { sessionId: params.sessionId, modeId: params.value })
+            reasoning.noteEffort(params.value)
+            return present(params.sessionId, { configOptions: current })
+          }
+          const switched = await connection.agent.request<unknown>("session/set_model", { sessionId: params.sessionId, modelId: params.value })
+          reasoning.remember(switched)
+          const advertised = typeof switched === "object" && switched !== null && "configOptions" in switched
+            ? switched.configOptions as acp.SessionConfigOption[] | null | undefined : undefined
+          return present(params.sessionId, {
+            ...(typeof switched === "object" && switched !== null ? switched : {}),
+            configOptions: advertised ?? withModelValue(current, params.value),
+          })
+        }
+        const updated = await sessionModes.setConfigOption(
+          params,
+          request => connection.agent.request(acp.methods.agent.session.setMode, request),
+          request => connection.agent.request(acp.methods.agent.session.setConfigOption, request),
+          knownOptions,
+        )
+        reasoning.remember(updated)
+        return reasoning.project(updated)
+      },
       async resume(params) {
         rememberSession(params.sessionId)
         const capabilities = initialization.agentCapabilities
         if (capabilities?.sessionCapabilities?.resume) {
-          return sessionModes.response(params.sessionId, await connection.agent.request(acp.methods.agent.session.resume, params))
+          return present(params.sessionId, await connection.agent.request(acp.methods.agent.session.resume, params))
         }
         if (!capabilities?.loadSession) throw new Error("The agent does not support session resume")
         replayingHistory = true
@@ -205,7 +263,7 @@ export async function connectAcpProcess(launch: AgentProcess, client: AgentClien
             mcpServers: params.mcpServers ?? [],
             ...(params.additionalDirectories?.length ? { additionalDirectories: params.additionalDirectories } : {}),
           })
-          return sessionModes.response(params.sessionId, loaded)
+          return present(params.sessionId, loaded)
         } finally {
           replayingHistory = false
         }

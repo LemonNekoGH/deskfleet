@@ -7,6 +7,7 @@ import { runInNewContext } from "node:vm"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 import type * as acp from "@agentclientprotocol/sdk"
+import { agentConfiguration } from "./agent-configuration-protocol.ts"
 import { canContinueSession, connectAcpProcess, supportsSteering, type AgentProcess } from "./agents/acp.ts"
 import { authenticateCursor } from "./agents/cursor.ts"
 import { authenticateGrok } from "./agents/grok.ts"
@@ -300,6 +301,7 @@ test("Cursor ACP authenticates and loads a saved session without replaying its h
   assert.equal(connection.initialization.agentCapabilities?.sessionCapabilities?.resume, undefined)
   const created = await connection.newSession(session)
   assert.equal(created._meta?.authenticated, true)
+  assert.equal(agentConfiguration(created.configOptions ?? []).reasoningEfforts, null)
   const loaded = await connection.resume({ ...session, sessionId: created.sessionId })
   assert.equal(loaded._meta?.method, "session/load")
   assert.deepEqual(loaded._meta?.request, { ...session, sessionId: created.sessionId })
@@ -313,6 +315,57 @@ test("Cursor ACP authenticates and loads a saved session without replaying its h
     assert.match(details, /authenticate required/u)
     return true
   })
+})
+
+test("Cursor parameterized model options expose reasoning effort and apply it", { timeout: 15_000 }, async context => {
+  const connection = await connectAcpProcess({
+    ...launch, env: { DESKFLEET_TEST_AGENT_MODE: "cursor" },
+  }, { onUpdate() {} }, {
+    afterInitialize: authenticateCursor,
+    clientCapabilities: { _meta: { parameterizedModelPicker: true } },
+  })
+  context.after(() => connection.close())
+  assert.equal(connection.initialization._meta?.clientCapabilities &&
+    (connection.initialization._meta.clientCapabilities as { _meta?: { parameterizedModelPicker?: boolean } })._meta?.parameterizedModelPicker, true)
+  const created = await connection.newSession(session)
+  const discovered = agentConfiguration(created.configOptions ?? [], { id: "cursor", name: "Cursor" })
+  assert.equal(discovered.reasoningEfforts?.id, "effort")
+  assert.deepEqual(discovered.reasoningEfforts?.options.map(option => option.id), ["low", "medium", "high", "xhigh"])
+  assert.equal(discovered.modes, null)
+  const changed = await connection.setConfigOption({
+    sessionId: created.sessionId, configId: "effort", value: "low",
+  }, created.configOptions ?? undefined)
+  const configuration = agentConfiguration(changed.configOptions, { id: "cursor", name: "Cursor" })
+  assert.equal(configuration.reasoningEfforts?.currentValue, "low")
+  assert.equal(configuration.models?.currentValue, "composer-2.5")
+})
+
+test("Grok model metadata exposes reasoning effort and applies it with session/set_mode", { timeout: 15_000 }, async context => {
+  const connection = await connectAcpProcess({
+    ...launch, env: { DESKFLEET_TEST_AGENT_MODE: "grok-effort" },
+  }, { onUpdate() {} })
+  context.after(() => connection.close())
+  const created = await connection.newSession(session)
+  const discovered = agentConfiguration(created.configOptions ?? [], { id: "grok", name: "Grok" })
+  assert.equal(discovered.models?.currentValue, "grok-4.5")
+  assert.deepEqual(discovered.reasoningEfforts?.options.map(option => option.id), ["low", "medium", "high"])
+  assert.equal(discovered.reasoningEfforts?.currentValue, "high")
+  assert.equal(discovered.modes, null)
+  const effort = await connection.setConfigOption({
+    sessionId: created.sessionId, configId: discovered.reasoningEfforts!.id, value: "low",
+  }, created.configOptions ?? undefined)
+  const afterEffort = agentConfiguration(effort.configOptions, { id: "grok", name: "Grok" })
+  assert.equal(afterEffort.reasoningEfforts?.currentValue, "low")
+  assert.equal(afterEffort.models?.currentValue, "grok-4.5")
+  assert.deepEqual(afterEffort.models?.options.map(option => option.id), ["grok-4.5", "grok-fast"])
+  const model = await connection.setConfigOption({
+    sessionId: created.sessionId, configId: "model", value: "grok-fast",
+  }, effort.configOptions)
+  const afterModel = agentConfiguration(model.configOptions, { id: "grok", name: "Grok" })
+  assert.equal(afterModel.models?.currentValue, "grok-fast")
+  assert.deepEqual(afterModel.models?.options.map(option => option.id), ["grok-4.5", "grok-fast"])
+  assert.equal(afterModel.reasoningEfforts, null)
+  assert.equal(afterModel.modes, null)
 })
 
 test("Grok ACP prefers an API key, then a cached login, and skips interactive auth", { timeout: 15_000 }, async context => {

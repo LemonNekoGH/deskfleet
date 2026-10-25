@@ -1,5 +1,5 @@
 import type * as acp from "@agentclientprotocol/sdk"
-import { agentConfiguration, selectAgentOption, type AgentConfiguration, type AgentConfigurationParams, type AgentConfigurationSelection } from "./agent-configuration-protocol.ts"
+import { agentConfiguration, selectAgentOption, selectReasoningEffort, type AgentConfiguration, type AgentConfigurationParams, type AgentConfigurationSelection } from "./agent-configuration-protocol.ts"
 import type { AgentConfig, AgentConnection, AgentProvider } from "./agents/acp.ts"
 import { codexProvider } from "./agents/codex.ts"
 
@@ -10,16 +10,16 @@ export async function applyAgentConfiguration(
   changed: (options: acp.SessionConfigOption[]) => void | Promise<void> = () => {},
   force = false,
 ): Promise<acp.SessionConfigOption[]> {
-  for (const [category, id, value] of [
-    ["model", "model", selection.model],
-    ["thought_level", "reasoning_effort", selection.reasoningEffort],
-    ["mode", "mode", selection.mode],
-  ] as const) {
-    if (value === undefined) continue
-    const option = selectAgentOption(options, category, id)
-    if (!option || !option.options.some(choice => choice.id === value)) throw new Error(`Unsupported agent ${id}: ${value}`)
-    if (force || option.currentValue !== value) {
-      options = (await agent.setConfigOption({ sessionId, configId: option.id, value }, options)).configOptions
+  for (const step of [
+    { value: selection.model, errorId: "model", find: (current: acp.SessionConfigOption[]) => selectAgentOption(current, "model", "model") },
+    { value: selection.reasoningEffort, errorId: "reasoning_effort", find: selectReasoningEffort },
+    { value: selection.mode, errorId: "mode", find: (current: acp.SessionConfigOption[]) => selectAgentOption(current, "mode", "mode") },
+  ]) {
+    if (step.value === undefined) continue
+    const option = step.find(options)
+    if (!option || !option.options.some(choice => choice.id === step.value)) throw new Error(`Unsupported agent ${step.errorId}: ${step.value}`)
+    if (force || option.currentValue !== step.value) {
+      options = (await agent.setConfigOption({ sessionId, configId: option.id, value: step.value }, options)).configOptions
       // A successful response replaces historical metadata with live state.
       force = false
       await changed(options)

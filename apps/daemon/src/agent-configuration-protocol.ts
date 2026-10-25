@@ -68,25 +68,44 @@ export function validateAgentConfigurationSelection(params: Record<string, unkno
   }
 }
 
+/** Select ids agents use for reasoning effort when they omit `thought_level`. */
+export const REASONING_CONFIG_IDS = ["reasoning_effort", "effort", "thinking_intensity", "thinking_level"] as const
+
+function selectChoices(option: acp.SessionConfigOption & { type: "select" }): Array<{ value: string; name: string; description?: string | null }> {
+  return option.options.flatMap(value => "group" in value ? value.options : [value])
+}
+
+function toAgentOption(option: acp.SessionConfigOption & { type: "select" }): AgentConfigOption {
+  return {
+    id: option.id,
+    currentValue: option.currentValue,
+    options: selectChoices(option).map(value => ({ id: value.value, name: value.name,
+      ...(typeof value.description === "string" ? { description: value.description } : {}),
+    })),
+  }
+}
+
 export function selectAgentOption(options: acp.SessionConfigOption[], category: string, id: string): AgentConfigOption | null {
   const option = options.find(option => option.category === category && option.type === "select")
     ?? options.find(option => option.id === id && option.type === "select")
   if (!option || option.type !== "select") return null
-  return {
-    id: option.id,
-    currentValue: option.currentValue,
-    options: option.options.flatMap(value => "group" in value ? value.options : [value])
-      .map(value => ({ id: value.value, name: value.name,
-        ...(typeof value.description === "string" ? { description: value.description } : {}),
-      })),
-  }
+  return toAgentOption(option)
+}
+
+/** A reasoning control with at least one choice. Empty placeholders do not hide model metadata. */
+export function selectReasoningEffort(options: acp.SessionConfigOption[]): AgentConfigOption | null {
+  const usable = options.filter((option): option is acp.SessionConfigOption & { type: "select" } =>
+    option.type === "select" && selectChoices(option).length > 0)
+  const option = usable.find(option => option.category === "thought_level")
+    ?? REASONING_CONFIG_IDS.map(id => usable.find(option => option.id === id)).find(option => option !== undefined)
+  return option ? toAgentOption(option) : null
 }
 
 export function agentConfiguration(options: acp.SessionConfigOption[], provider: AgentChoice = { id: "codex", name: "Codex" }): AgentConfiguration {
   return {
     provider,
     models: selectAgentOption(options, "model", "model"),
-    reasoningEfforts: selectAgentOption(options, "thought_level", "reasoning_effort"),
+    reasoningEfforts: selectReasoningEffort(options),
     modes: selectAgentOption(options, "mode", "mode"),
   }
 }
