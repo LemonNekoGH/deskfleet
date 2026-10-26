@@ -207,6 +207,24 @@ export declare function requestWaylandDesktopAccess(directory: string): Promise<
 /** Probe the selected display's encoders on a worker thread. */
 export declare function supportedVideoCodecs(displayId: number): Promise<Array<string>>
 
+/** Read the machine's CPU and memory usage without blocking Node's event loop. */
+export declare function systemStatus(): Promise<SystemStatus>
+
+/** Transient host metrics; byte counts and Unix milliseconds are JavaScript numbers. */
+export interface SystemStatus {
+  sampledAt: number
+  cpuUsagePercent: number
+  memoryUsedBytes: number
+  memoryTotalBytes: number
+  swapUsedBytes: number
+  swapTotalBytes: number
+  cpuModel: string
+  logicalCpuCount: number
+  os: string
+  arch: string
+  uptimeSeconds: number
+}
+
 export interface TerminalConfig {
   cwd: string
   cols: number

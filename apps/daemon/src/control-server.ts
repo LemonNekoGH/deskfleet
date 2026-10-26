@@ -5,6 +5,7 @@ import { connect, createServer, type Socket } from "node:net"
 import { hostname, tmpdir } from "node:os"
 import { join } from "node:path"
 import type { NativePeer, PeerConfig } from "@deskfleet/native"
+import { readSystemStatus } from "./system-status.ts"
 import { desktopCapabilities, supportsDesktop } from "./desktop-capabilities.ts"
 import { daemonDiscoveryPath, readDaemonDiscovery } from "./control-discovery.ts"
 import { MAX_CONTROL_MESSAGE_BYTES, desktopErrorEvent, desktopStartupCleanupFailure, encoderFailure, isEncoderFailure, type ControlMessage, type ControlRequest, type DaemonDiscovery, type DesktopCapabilities, type DesktopEvent } from "./control-protocol.ts"
@@ -222,6 +223,8 @@ class ControlConnection {
       }
       case "capabilities":
         return this.#capabilities()
+      case "systemStatus":
+        return readSystemStatus()
       case "terminalList":
         return this.#terminals.list()
       case "terminalDial": {

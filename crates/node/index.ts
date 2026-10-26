@@ -2,10 +2,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { getAsset, isSea } from "node:sea"
-import type { DisplayInfo, NativeCatalog, NativeInfo, NativePeer, NativeTerminal, PeerConfig, TerminalConfig, WaylandDesktopAccess } from "./bindings.d.ts"
+import type { DisplayInfo, NativeCatalog, NativeInfo, NativePeer, NativeTerminal, PeerConfig, SystemStatus, TerminalConfig, WaylandDesktopAccess } from "./bindings.d.ts"
 
 export type { DesktopConfig, DisplayInfo, IceCandidate, IceServer, MediaFailure, NativeInfo, NativePeer, NativeTerminal, PeerConfig, PeerEvent, TerminalConfig, TerminalEvent, VideoCodec, WaylandDesktopAccess } from "./bindings.d.ts"
 export type { CatalogDirectory, CatalogSnapshot, CatalogWorkspace, CatalogWorkspaceSession, CatalogWorktree, NativeCatalog } from "./bindings.d.ts"
+export type { SystemStatus } from "./bindings.d.ts"
 
 type Bindings = typeof import("./bindings.d.ts")
 let bindings: Bindings | undefined
@@ -46,6 +47,11 @@ function loadBindings(): Bindings {
 
 export function nativeInfo(): NativeInfo {
   return (bindings ??= loadBindings()).nativeInfo()
+}
+
+/** Read machine CPU and memory usage on a native worker. */
+export function systemStatus(): Promise<SystemStatus> {
+  return (bindings ??= loadBindings()).systemStatus()
 }
 
 export function createPeer(config: PeerConfig = {}): Promise<NativePeer> {

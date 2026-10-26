@@ -7,6 +7,7 @@ pub mod media;
 #[cfg(target_os = "macos")]
 mod permission_settings;
 pub mod rtc;
+pub mod system_status;
 pub mod terminal;
 
 /// The operating system and architecture this library was built for.

@@ -61,6 +61,7 @@ rtc = { version = "0.21.1", default-features = false }
 rand = "0.10"
 opus = "0.4"
 portable-pty = "0.9"
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 filedescriptor = "0.8"
 nix = { version = "0.31", features = ["signal"] }
 libloading = "0.9"

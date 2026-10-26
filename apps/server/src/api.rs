@@ -239,6 +239,7 @@ const MANAGEMENT: &[&str] = &[
     "providerInstall",
     "providerLogin",
     "capabilities",
+    "systemStatus",
     "terminalList",
     "terminalDial",
     "terminalHangup",

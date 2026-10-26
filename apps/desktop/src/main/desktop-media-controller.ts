@@ -34,6 +34,7 @@ export class DesktopMediaController {
       case "capabilities":
         return (await this.#connect()).call("capabilities", {})
       case "terminalList":
+      case "systemStatus":
       case "terminalDial":
       case "terminalHangup":
       case "catalogList":

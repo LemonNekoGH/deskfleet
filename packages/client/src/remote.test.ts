@@ -52,6 +52,17 @@ test("retains known terminal tabs during a daemon signaling outage", async () =>
   expect(f.central.rpc).toHaveBeenCalledTimes(1)
 })
 
+test("system status reads the selected remote machine without opening a peer", async () => {
+  const f = fixture()
+  const status = { sampledAt: 1_793_000_000_000, cpuUsagePercent: 37.5, daemonVersion: "2.3.4" }
+  vi.mocked(f.central.rpc).mockResolvedValue(status)
+  expect(await f.remote.api.system!.status()).toEqual(status)
+  expect(f.central.rpc).toHaveBeenCalledWith("central7", "systemStatus", {})
+  expect(f.central.createPeer).not.toHaveBeenCalled()
+  vi.mocked(f.central.rpc).mockRejectedValueOnce(new Error("Machine is offline"))
+  await expect(f.remote.api.system!.status()).rejects.toThrow("Machine is offline")
+})
+
 test("desktop control is requested explicitly when starting its authorized peer", async () => {
   const f = fixture()
   await f.remote.api.desktop.prepare!("desktop")

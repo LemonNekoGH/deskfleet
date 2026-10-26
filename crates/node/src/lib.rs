@@ -7,6 +7,7 @@ mod desktop_access;
 mod media;
 mod permissions;
 mod rtc;
+mod system_status;
 mod terminal;
 
 pub use catalog::{
@@ -25,6 +26,7 @@ pub use permissions::{
 pub use rtc::{
     IceCandidate, IceServer, NativePeer, PeerConfig, PeerEvent, VideoCodec, create_peer,
 };
+pub use system_status::{SystemStatus, system_status};
 pub use terminal::{NativeTerminal, TerminalConfig, TerminalEvent, create_terminal};
 
 /// Build information for the loaded native addon.

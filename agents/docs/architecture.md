@@ -483,9 +483,18 @@ implicit global ignore file also require reopening. Notifications require
 Session provisioning still owns creation
 and deletion of managed worktrees.
 
-The machine's Remote control page groups Terminal, Desktop, and File transfer.
+The machine's Remote control page groups Terminal, Desktop, File transfer, and
+System status.
 Tools mount when first visited and retain their connections while switching tabs.
 Machine-owned shells live here; Session-owned shells stay in the Session panel.
+System status reads CPU usage, physical memory, swap, and machine details from
+the owning daemon's native collector through the authenticated machine management
+RPC. The client refreshes every two seconds while the panel is visible and the
+machine is online, pauses when its tab or window is hidden, and retains recent
+samples only in the mounted panel for CPU and memory trends. Failed reads leave
+the last sample visibly stale; these measurements are not persisted in the central
+catalog or Agent history. Native sampling runs off Node's event loop and is shared
+by concurrent reads without a background polling service.
 
 Machine file access shares one service between the two-pane transfer panel and
 Agent Markdown resources. File peers and the transfer queue have independent

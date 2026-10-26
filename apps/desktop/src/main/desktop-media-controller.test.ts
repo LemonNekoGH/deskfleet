@@ -121,6 +121,16 @@ test("folder browsing forwards opaque paths to the daemon without creating a pee
   expect(mock.connect).toHaveBeenCalledTimes(1)
 })
 
+test("system status uses the authenticated daemon request without opening a peer", async () => {
+  const { controller, client } = fixture()
+  const status = { sampledAt: 1_793_000_000_000, cpuUsagePercent: 37.5, daemonVersion: "2.3.4" }
+  client.call.mockResolvedValue(status)
+  await expect(controller.invoke("systemStatus", {})).resolves.toEqual(status)
+  expect(client.call).toHaveBeenCalledWith("systemStatus", {})
+  await expect(controller.invoke("systemStatus", null)).rejects.toThrow("Expected an object")
+  expect(client.call).toHaveBeenCalledTimes(1)
+})
+
 test("dial and hangup use authenticated signaling even without a data peer", async () => {
   const { controller, client, event, emitTerminal, emit } = fixture()
   const dial = { mode: "create", terminalId: "shell-1", cols: 80, rows: 24 }

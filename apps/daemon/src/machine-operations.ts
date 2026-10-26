@@ -1,3 +1,4 @@
+import { readSystemStatus } from "./system-status.ts"
 import type { AgentSessions } from "./agent-sessions.ts"
 import type { AgentActor, AgentMethod } from "./agent-protocol.ts"
 import type { AgentProviders } from "./agent-providers.ts"
@@ -11,6 +12,7 @@ import type { ProviderSetup } from "./provider-setup.ts"
 import type { ScheduledTasks } from "./scheduled-tasks.ts"
 import type { McpServers } from "./mcp-servers.ts"
 import { mcpServerInput, validateMcpServerId } from "./mcp-server-protocol.ts"
+import type { SystemStatus } from "./system-protocol.ts"
 
 const MANAGEMENT = new Set<AgentMethod>([
   "_deskfleet/agent/configuration", "_deskfleet/session/configuration", "_deskfleet/session/configure",
@@ -28,6 +30,7 @@ export class MachineOperations {
   readonly schedules?: ScheduledTasks
   readonly mcpServers?: McpServers
   readonly #capabilities: () => Promise<DesktopCapabilities>
+  readonly #systemStatus: () => Promise<SystemStatus>
   #workspaceMutations: Promise<unknown> = Promise.resolve()
 
   constructor(options: {
@@ -35,11 +38,13 @@ export class MachineOperations {
     providers: AgentProviders; setup: ProviderSetup; capabilities: () => Promise<DesktopCapabilities>
     schedules?: ScheduledTasks
     mcpServers?: McpServers
+    systemStatus?: () => Promise<SystemStatus>
   }) {
     this.agents = options.agents; this.catalog = options.catalog; this.terminals = options.terminals
     this.providers = options.providers; this.setup = options.setup; this.#capabilities = options.capabilities
     this.schedules = options.schedules
     this.mcpServers = options.mcpServers
+    this.#systemStatus = options.systemStatus ?? readSystemStatus
   }
 
   async dial(params: TerminalDial): Promise<TerminalSummary> {
@@ -97,6 +102,7 @@ export class MachineOperations {
       case "providerInstall": return this.setup.install(request.params.provider)
       case "providerLogin": return this.setup.login(request.params.provider)
       case "capabilities": return this.#capabilities()
+      case "systemStatus": return this.#systemStatus()
       case "terminalList": return this.terminals.list()
       case "terminalDial": return this.dial(request.params)
       case "terminalHangup": await this.terminals.hangup(request.params.terminalId); return null

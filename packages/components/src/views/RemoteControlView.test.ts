@@ -19,6 +19,7 @@ const TerminalStub = defineComponent({
 })
 const DesktopStub = defineComponent({ name: "DesktopView", props: ["machineId"], template: '<div data-tool="desktop" />' })
 const FilesStub = defineComponent({ name: "FileTransferPanel", props: ["api", "target", "machineName"], template: '<div data-tool="files" />' })
+const SystemStub = defineComponent({ name: "SystemStatusPanel", props: ["machineId", "machineName", "online", "active"], template: '<div data-tool="system" />' })
 const shell: TerminalSummary = { id: "shell", title: "zsh", cwd: "/workspace", cols: 80, rows: 24, status: "running" }
 const originalFiles = platformClient.files
 const originalDesktop = platformClient.desktop
@@ -60,6 +61,7 @@ async function setup(options: { desktop?: boolean; machineId?: string; query?: L
     attachTo: document.body,
     global: { plugins: [pinia, router, i18n], stubs: {
       TerminalWorkspace: TerminalStub, DesktopView: options.realDesktop ? false : DesktopStub, FileTransferPanel: FilesStub,
+      SystemStatusPanel: SystemStub,
     } },
   })
   cleanup.push(() => { wrapper.unmount(); disposePinia(pinia) })
@@ -92,12 +94,13 @@ function connectButton(wrapper: VueWrapper) {
   return wrapper.findAll("[data-desktop-stage] button").find(button => button.text() === "Connect")!
 }
 
-test("a headless machine defaults to Terminal without mounting Desktop or Files", async () => {
+test("a headless machine defaults to Terminal without mounting other tools", async () => {
   const { wrapper, create } = await setup()
-  expect(tabs(wrapper).map(tab => tab.attributes("aria-selected"))).toEqual(["true", "false", "false"])
+  expect(tabs(wrapper).map(tab => tab.attributes("aria-selected"))).toEqual(["true", "false", "false", "false"])
   expect(wrapper.findComponent(TerminalStub).exists()).toBe(true)
   expect(wrapper.findComponent(DesktopStub).exists()).toBe(false)
   expect(wrapper.findComponent(FilesStub).exists()).toBe(false)
+  expect(wrapper.findComponent(SystemStub).exists()).toBe(false)
   expect(create).not.toHaveBeenCalled()
 })
 
@@ -126,7 +129,7 @@ test("tools mount only when first visited and keep the same instances across tab
   expect(wrapper.getComponent(FilesStub).isVisible()).toBe(true)
 })
 
-test.each([{ tab: 0, name: "Terminal" }, { tab: 2, name: "Files" }])(
+test.each([{ tab: 0, name: "Terminal" }, { tab: 2, name: "Files" }, { tab: 3, name: "System status" }])(
   "switching to $name disconnects Desktop and returning preserves settings until manually reconnecting",
   async ({ tab }) => {
     const { api, listeners } = mockDesktop()
@@ -258,12 +261,12 @@ test("keyboard navigation selects and focuses tabs, wrapping at either end", asy
     expect(tabs(wrapper)[expected]!.attributes("aria-selected")).toBe("true")
     expect(tabs(wrapper)[expected]!.attributes("tabindex")).toBe("0")
     expect(document.activeElement).toBe(tabs(wrapper)[expected]!.element)
-    expect(router.currentRoute.value.query.tab).toBe(["terminal", "desktop", "files"][expected])
+    expect(router.currentRoute.value.query.tab).toBe(["terminal", "desktop", "files", "system"][expected])
   }
-  await move(0, "ArrowLeft", 2)
-  await move(2, "ArrowRight", 0)
-  await move(0, "End", 2)
-  await move(2, "Home", 0)
+  await move(0, "ArrowLeft", 3)
+  await move(3, "ArrowRight", 0)
+  await move(0, "End", 3)
+  await move(3, "Home", 0)
   await move(0, "ArrowRight", 1)
 })
 
@@ -273,11 +276,12 @@ test("an unknown machine mounts no tools", async () => {
   expect(wrapper.findComponent(TerminalStub).exists()).toBe(false)
   expect(wrapper.findComponent(DesktopStub).exists()).toBe(false)
   expect(wrapper.findComponent(FilesStub).exists()).toBe(false)
+  expect(wrapper.findComponent(SystemStub).exists()).toBe(false)
   expect(create).not.toHaveBeenCalled()
   expect(files.list).not.toHaveBeenCalled()
 })
 
-test("a machine outside the current adapter cannot start local terminal, desktop, or file tools", async () => {
+test("a machine outside the current adapter cannot start tools against the current machine", async () => {
   const target = vi.spyOn(platformClient.desktop, "target")
   const capabilities = vi.spyOn(platformClient.desktop, "capabilities")
   const offer = vi.spyOn(platformClient.desktop, "offer")
@@ -285,6 +289,8 @@ test("a machine outside the current adapter cannot start local terminal, desktop
   expect(wrapper.findComponent(TerminalStub).exists()).toBe(false)
   await select(wrapper, 2)
   expect(wrapper.findComponent(FilesStub).exists()).toBe(false)
+  await select(wrapper, 3)
+  expect(wrapper.findComponent(SystemStub).exists()).toBe(false)
   await select(wrapper, 1)
   await vi.waitFor(() => expect(wrapper.find("[data-desktop-stage]").exists()).toBe(true))
   expect(target).not.toHaveBeenCalled()
@@ -299,14 +305,47 @@ test("changing the machine clears previously visited panels and their instances"
   const terminal = wrapper.getComponent(TerminalStub).vm
   await select(wrapper, 1)
   await select(wrapper, 2)
+  await select(wrapper, 3)
   await router.push({ name: "machine-control", params: { machineId: "other" } })
   await flushPromises()
   expect(wrapper.findComponent(TerminalStub).exists()).toBe(false)
   expect(wrapper.findComponent(DesktopStub).exists()).toBe(false)
   expect(wrapper.findComponent(FilesStub).exists()).toBe(false)
+  expect(wrapper.findComponent(SystemStub).exists()).toBe(false)
   await router.push({ name: "machine-control", params: { machineId: fleet.targetId } })
   await flushPromises()
   expect(wrapper.getComponent(TerminalStub).vm).not.toBe(terminal)
+  expect(wrapper.findComponent(DesktopStub).exists()).toBe(false)
+  expect(wrapper.findComponent(FilesStub).exists()).toBe(false)
+  expect(wrapper.findComponent(SystemStub).exists()).toBe(false)
+})
+
+test("System status mounts on demand and follows tab visibility and machine presence", async () => {
+  const { wrapper, fleet, router } = await setup()
+  expect(wrapper.findComponent(SystemStub).exists()).toBe(false)
+  await select(wrapper, 3)
+  const system = wrapper.getComponent(SystemStub)
+  const instance = system.vm
+  expect(router.currentRoute.value.query.tab).toBe("system")
+  expect(system.props()).toMatchObject({
+    machineId: fleet.targetId, machineName: fleet.localDesktopTarget.name, online: true, active: true,
+  })
+  expect(wrapper.vm.worktree).toBeNull()
+  await select(wrapper, 0)
+  expect(system.props("active")).toBe(false)
+  expect(system.isVisible()).toBe(false)
+  await select(wrapper, 3)
+  expect(wrapper.getComponent(SystemStub).vm).toBe(instance)
+  expect(system.props("active")).toBe(true)
+  fleet.localDesktopTarget.online = false
+  await flushPromises()
+  expect(system.props("online")).toBe(false)
+})
+
+test("the system query opens System status directly without mounting other tools", async () => {
+  const { wrapper } = await setup({ query: { tab: "system" } })
+  expect(wrapper.getComponent(SystemStub).props("active")).toBe(true)
+  expect(wrapper.findComponent(TerminalStub).exists()).toBe(false)
   expect(wrapper.findComponent(DesktopStub).exists()).toBe(false)
   expect(wrapper.findComponent(FilesStub).exists()).toBe(false)
 })

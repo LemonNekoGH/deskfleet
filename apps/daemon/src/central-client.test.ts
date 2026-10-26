@@ -31,7 +31,7 @@ test("local discovery grants only host setup and never imports development resou
   assert.equal(status.configured, false)
   assert.equal(status.connected, false)
   assert.equal(status.revoked, false)
-  for (const method of ["catalogList", "providerList", "terminalList"] as const) await assert.rejects(client.call(method, {}), /Sign in and select a team/)
+  for (const method of ["catalogList", "providerList", "terminalList", "systemStatus"] as const) await assert.rejects(client.call(method, {}), /Sign in and select a team/)
   await assert.rejects(client.call("workspaceCreate", { name: "Unauthorized", directories: [{ path: directory }] }), /backend API/)
 })
 
@@ -165,13 +165,13 @@ test("read and signaling RPCs do not republish catalogs; resource events still s
   socket.receive({ type: "ready", serverId: "server", machineId: "machine", teamId: "team" })
   await flush("/api/daemon/catalog")
   assert.equal(catalogs(), 1)
-  for (const method of ["terminalList", "peer.close"]) {
+  for (const method of ["terminalList", "systemStatus", "peer.close"]) {
     socket.receive({ type: "request", id: method, method, params: { peerId: "closed-peer" } })
   }
   await setImmediate()
   await flush()
-  assert.deepEqual(new Map(replies.map(({ id, error }) => [id, error])), new Map([["terminalList", undefined], ["peer.close", undefined]]))
-  assert.equal(catalogs(), 1, "Refreshing terminal lists must not start a catalogChanged feedback loop")
+  assert.deepEqual(new Map(replies.map(({ id, error }) => [id, error])), new Map([["terminalList", undefined], ["systemStatus", undefined], ["peer.close", undefined]]))
+  assert.equal(catalogs(), 1, "Reading terminal lists and system status must not start a catalogChanged feedback loop")
   for (const changed of [catalogChanged, providersChanged, terminalsChanged]) {
     const before = catalogs()
     changed(); await flush("/api/daemon/catalog")

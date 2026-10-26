@@ -79,6 +79,7 @@ return {
   filesystem: {
     listDirectories: (path) => invokeDesktop("directoryList", path === undefined ? {} : { path }),
   },
+  system: { status: () => invokeDesktop("systemStatus", {}) },
   providers: {
     list: () => invokeDesktop("providerList", {}),
     create: (provider) => invokeDesktop("providerCreate", { provider }),

@@ -3,6 +3,7 @@ import type { CatalogEvent, CatalogMethods } from "./catalog-protocol.ts"
 import type { FilesystemMethods } from "./filesystem-protocol.ts"
 import type { ProviderEvent, ProviderMethods } from "./provider-protocol.ts"
 import type { CentralStatus, MachineEnrollment } from "./central-protocol.ts"
+import type { SystemMethods } from "./system-protocol.ts"
 
 /** Provisional local IPC contract. Media and terminal bytes stay on WebRTC. */
 export type VideoCodec = "h264" | "h265" | "av1"
@@ -102,7 +103,7 @@ export interface LocalDaemonInfo extends DesktopPermissionsState {
 export type DaemonEvent = DesktopEvent | TerminalSessionEvent | CatalogEvent | ProviderEvent
   | { kind: "desktopPermissionsChanged"; permissions: DesktopPermissionsState }
 
-export interface ControlMethods extends CatalogMethods, FilesystemMethods, ProviderMethods {
+export interface ControlMethods extends CatalogMethods, FilesystemMethods, ProviderMethods, SystemMethods {
   permissionsRefresh: { params: Record<string, never>; result: DesktopPermissionsState }
   permissionRequest: { params: { permission: DesktopPermissionKind }; result: DesktopPermissionsState }
   centralStatus: { params: Record<string, never>; result: CentralStatus }

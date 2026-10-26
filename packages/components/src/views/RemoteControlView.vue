@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { client as platformClient } from "@deskfleet/client/platform"
-import { FolderSync, MonitorPlay, SquareTerminal } from "@lucide/vue"
+import { Activity, FolderSync, MonitorPlay, SquareTerminal } from "@lucide/vue"
 import { watchImmediate } from "@vueuse/core"
 import { computed, defineAsyncComponent, nextTick, ref, useId } from "vue"
 import { useI18n } from "vue-i18n"
@@ -14,6 +14,7 @@ import { useTerminalsStore } from "../stores/terminals.ts"
 const TerminalWorkspace = defineAsyncComponent(() => import("../components/terminal/TerminalWorkspace.vue"))
 const FileTransferPanel = defineAsyncComponent(() => import("../components/files/FileTransferPanel.vue"))
 const DesktopView = defineAsyncComponent(() => import("./DesktopView.vue"))
+const SystemStatusPanel = defineAsyncComponent(() => import("../components/system/SystemStatusPanel.vue"))
 
 const props = defineProps<{ machineId: string }>()
 const { t } = useI18n()
@@ -27,6 +28,7 @@ const tabs = [
   { id: "terminal", label: "remoteControl.terminal", icon: SquareTerminal },
   { id: "desktop", label: "remoteControl.desktop", icon: MonitorPlay },
   { id: "files", label: "files.title", icon: FolderSync },
+  { id: "system", label: "systemStatus.title", icon: Activity },
 ] as const
 type Tool = typeof tabs[number]["id"]
 const active = computed<Tool>(() => tabs.find(tab => tab.id === route.query.tab)?.id
@@ -96,6 +98,10 @@ const activeTerminal = computed({
     <div v-if="visited.has('files')" v-show="active === 'files'" :id="panelId('files')" role="tabpanel" :aria-labelledby="tabId('files')" class="flex min-h-0 flex-1 flex-col overflow-auto">
       <FileTransferPanel v-if="files && target && currentTarget" :key="target.kind === 'machine' ? `${target.teamId}:${target.machineId}` : 'local'" :api="files" :target="target" :machine-name="machine.name" />
       <p v-else class="m-auto p-6 text-sm text-ui-text-muted">{{ t('remoteControl.filesUnavailable') }}</p>
+    </div>
+    <div v-if="visited.has('system')" v-show="active === 'system'" :id="panelId('system')" role="tabpanel" :aria-labelledby="tabId('system')" class="flex min-h-0 flex-1 flex-col overflow-auto">
+      <SystemStatusPanel v-if="currentTarget" :machine-id="machineId" :machine-name="machine.name" :online="machine.online" :active="active === 'system'" />
+      <p v-else class="m-auto p-6 text-sm text-ui-text-muted">{{ t('systemStatus.unavailable') }}</p>
     </div>
   </div>
   <p v-else class="m-auto p-6 text-sm text-ui-text-muted">{{ t('desktop.notFound') }}</p>

@@ -84,6 +84,7 @@ export function remoteMachineClient(host: DeskfleetDesktopApi, central: CentralA
       onChanged: listener => { catalogEvents.add(listener); return () => { catalogEvents.delete(listener) } },
     },
     filesystem: { listDirectories: path => rpc("directoryList", path === undefined ? {} : { path }) },
+    system: { status: () => rpc("systemStatus") },
     providers: {
       display: async () => (await central.catalog(machine.id)).providers ?? { providers: [] },
       list: () => rpc("providerList"), create: provider => rpc("providerCreate", { provider }),

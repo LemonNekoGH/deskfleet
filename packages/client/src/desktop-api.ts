@@ -9,6 +9,7 @@ import type { TerminalSignalingApi } from "./terminal.ts"
 import type { AgentSignalingApi } from "./agent.ts"
 import type { ProvidersApi } from "./providers.ts"
 import type { OnboardingApi } from "./onboarding.ts"
+import type { SystemApi } from "./system.ts"
 
 /** The preload bridge exposed to the main renderer as `window.deskfleet`. */
 export interface DeskfleetDesktopApi {
@@ -26,4 +27,5 @@ export interface DeskfleetDesktopApi {
   terminal: TerminalSignalingApi
   agent: AgentSignalingApi
   providers: ProvidersApi
+  system?: SystemApi
 }

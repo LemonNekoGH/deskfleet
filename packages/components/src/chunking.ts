@@ -6,6 +6,11 @@
 export const clientCodeSplitting = {
   groups: [
     {
+      name: "echarts",
+      test: /[\\/]node_modules[\\/](?:echarts|zrender)[\\/]/,
+      priority: 30,
+    },
+    {
       name: "xterm",
       test: /[\\/]node_modules[\\/]@xterm[\\/]/,
       priority: 30,
