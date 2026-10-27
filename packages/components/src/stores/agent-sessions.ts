@@ -61,6 +61,7 @@ export const useAgentSessionsStore = defineStore("agent-sessions", () => {
   let connectionGeneration = 0
   let initialized: Promise<void> | null = null
   let refreshing: Promise<void> | null = null
+  let activeSessionId: string | undefined
   let disposed = false
 
   function view(id: string): AgentSessionView {
@@ -234,18 +235,20 @@ export const useAgentSessionsStore = defineStore("agent-sessions", () => {
     await initialize()
     return client.call<AgentMethods[M]["result"]>(method, params)
   }
-  function refresh(): Promise<void> {
+  function refresh(sessionId?: string): Promise<void> {
     const listedBefore = new Map(Object.values(sessions.value).map(session => [session.id, session.lastEventSeq]))
-    refreshing ??= call("_deskfleet/session/list", {}).then(records => {
+    const list = (refreshing ??= call("_deskfleet/session/list", {}).then(records => {
       const received = new Map(records.map(session => [session.id, session]))
       for (const current of Object.values(sessions.value)) {
         const record = received.get(current.id)
         if (record ? sequenceCompare(current.lastEventSeq, record.lastEventSeq) > 0 : !listedBefore.has(current.id) || sequenceCompare(current.lastEventSeq, listedBefore.get(current.id)!) > 0) received.set(current.id, current)
       }
       sessions.value = Object.fromEntries(received)
-      return Promise.all(Object.keys(views.value).filter(id => sessions.value[id]).map(open)).then(() => {})
-    }).catch(reason => { error.value = messageOf(reason) }).finally(() => { refreshing = null })
-    return refreshing
+    }).catch(reason => { error.value = messageOf(reason) }).finally(() => { refreshing = null }))
+    return list.then(() => {
+      const id = sessionId ?? activeSessionId
+      if (id && id === activeSessionId && sessions.value[id]) return open(id, false)
+    })
   }
   function readHistory(id: string): Promise<void> {
     const existing = reads.get(id)
@@ -266,11 +269,12 @@ export const useAgentSessionsStore = defineStore("agent-sessions", () => {
     reads.set(id, reading)
     return reading
   }
-  function open(id: string): Promise<void> {
+  function open(id: string, showLoading = true): Promise<void> {
+    if (showLoading) activeSessionId = id
     const existing = loads.get(id)
     if (existing) return existing
     const current = view(id)
-    current.loading = true
+    if (showLoading) current.loading = true
     current.error = null
     const loading = (async () => {
       snapshotReceived(await call("_deskfleet/session/subscribe", { sessionId: id }))

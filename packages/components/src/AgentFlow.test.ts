@@ -9,6 +9,7 @@ import { i18n } from "./i18n/index.ts"
 import { router } from "./router/index.ts"
 import { actor, agentElicitation, agentInput, agentPermission, agentSnapshot } from "./test/agent.ts"
 import { catalogFixture, workspaceId } from "./test/catalog.ts"
+import { useAgentSessionsStore } from "./stores/agent-sessions.ts"
 import { useProvidersStore } from "./stores/providers.ts"
 import { deferred } from "./test/desktop-media.ts"
 import SessionView from "./views/SessionView.vue"
@@ -39,7 +40,7 @@ beforeEach(async () => {
   vi.spyOn(platformClient.desktop, "target").mockResolvedValue({ id: "local-daemon", name: "Host", online: true, desktop: true })
   transport.call.mockReset().mockImplementation(async (method: string, params: Record<string, unknown>) => {
     if (method === "initialize") return {}
-    if (method === "_deskfleet/session/list") return []
+    if (method === "_deskfleet/session/list") return snapshot.session.title ? [structuredClone(snapshot.session)] : []
     if (method === "_deskfleet/agent/configuration") return {
       provider: { id: String(params.provider), name: String(params.provider) }, models: null, reasoningEfforts: null, modes: null,
     }
@@ -134,6 +135,13 @@ test("returning to unchanged conversation history scrolls after loading, while l
 
   scrollTo.mockClear()
   await scroller.trigger("scroll")
+  transport.call.mockImplementation(normal)
+  const subscribes = transport.call.mock.calls.filter(([method]) => method === "_deskfleet/session/subscribe").length
+  await useAgentSessionsStore(pinia).refresh("99")
+  expect(transport.call.mock.calls.filter(([method]) => method === "_deskfleet/session/subscribe")).toHaveLength(subscribes)
+  await useAgentSessionsStore(pinia).refresh("30")
+  await flushPromises()
+  expect(transport.call.mock.calls.filter(([method]) => method === "_deskfleet/session/subscribe")).toHaveLength(subscribes + 1)
   emit("acp", { sessionId: "provider", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "More context" } } })
   await flushPromises()
   expect(scrollTo).not.toHaveBeenCalled()

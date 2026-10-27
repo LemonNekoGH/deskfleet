@@ -146,7 +146,7 @@ async fn postgres_http_permissions_replication_and_signaling() {
         StatusCode::OK
     );
     assert!(
-        matches!(roster.try_recv().unwrap(), ControlMessage::CatalogChanged { machine_id: changed } if changed == machine_id)
+        matches!(roster.try_recv().unwrap(), ControlMessage::CatalogChanged { machine_id: changed, session_id: None } if changed == machine_id)
     );
     assert!(
         matches!(roster.try_recv().unwrap(), ControlMessage::MachinesChanged { team_id: changed } if changed == team_id)

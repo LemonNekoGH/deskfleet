@@ -15,7 +15,7 @@ const management = new Set<string>([
 export function remoteMachineClient(host: DeskfleetDesktopApi, central: CentralApi, machine: Machine): { api: DeskfleetDesktopApi; dispose(): void } {
   const peers = new Map<string, Peer>()
   const events = new Set<(event: DesktopEvent) => void>()
-  const catalogEvents = new Set<() => void>()
+  const catalogEvents = new Set<(sessionId?: string) => void>()
   const providerEvents = new Set<() => void>()
   let disposed = false
   let online = machine.online
@@ -30,8 +30,8 @@ export function remoteMachineClient(host: DeskfleetDesktopApi, central: CentralA
       if (event.type === "peerEvent") emit({ ...event.event, sessionId: local[0] } as DesktopEvent)
       else emit({ sessionId: local[0], kind: "error", error: event.reason })
     } else if (event.type === "catalogChanged" && event.machineId === machine.id) {
-      for (const listener of catalogEvents) listener()
-      for (const listener of providerEvents) listener()
+      for (const listener of catalogEvents) listener(event.sessionId)
+      if (!event.sessionId) for (const listener of providerEvents) listener()
     } else if (event.type === "presence" && event.machineId === machine.id) {
       online = event.online
       for (const listener of catalogEvents) listener()

@@ -143,6 +143,9 @@ pub enum ControlMessage {
     CatalogChanged {
         #[serde(rename = "machineId")]
         machine_id: String,
+        #[serde(rename = "sessionId", skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        session_id: Option<String>,
     },
     MachinesChanged {
         #[serde(rename = "teamId")]

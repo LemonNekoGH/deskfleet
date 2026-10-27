@@ -10,5 +10,5 @@ export interface CatalogApi {
   createWorkspace(name: string, directories: CatalogDirectory[]): Promise<CatalogWorkspace>
   updateWorkspace(workspaceId: string, name: string, directories: CatalogDirectory[]): Promise<CatalogWorkspace>
   deleteWorkspace(workspaceId: string): Promise<void>
-  onChanged(listener: () => void): () => void
+  onChanged(listener: (sessionId?: string) => void): () => void
 }
