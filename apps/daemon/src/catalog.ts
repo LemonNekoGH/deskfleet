@@ -4,11 +4,13 @@ import { isAbsolute, join } from "node:path"
 import { openCatalog, type NativeCatalog } from "@deskfleet/native"
 import type { AgentSessionContext } from "./agent-protocol.ts"
 import type { CatalogDirectory, CatalogEvent, CatalogMethods, CatalogRequest } from "./catalog-protocol.ts"
+import { SessionAttachments } from "./session-attachments.ts"
 import { ManagedSessionWorktrees } from "./session-worktrees.ts"
 import { readWorktreeRoot } from "./worktree-settings.ts"
 
 /** The daemon owns this machine's persistent catalog, independently of its clients. */
 export class DaemonCatalog {
+  readonly attachments: SessionAttachments
   readonly #directory: string
   readonly #hostDirectory: string
   readonly #listeners = new Set<(event: CatalogEvent) => void>()
@@ -16,7 +18,11 @@ export class DaemonCatalog {
   #catalog: NativeCatalog | undefined
   #sessions: ManagedSessionWorktrees | undefined
 
-  constructor(directory: string, hostDirectory = directory) { this.#directory = directory; this.#hostDirectory = hostDirectory }
+  constructor(directory: string, hostDirectory = directory) {
+    this.#directory = directory
+    this.#hostDirectory = hostDirectory
+    this.attachments = new SessionAttachments(directory)
+  }
 
   // Called only after this daemon has acquired its discovery record.
   async init(open: typeof openCatalog = openCatalog): Promise<void> {
@@ -94,6 +100,7 @@ export class DaemonCatalog {
         const worktree = await this.sessionWorktree(request.params.sessionId)
         if (worktree) for (const release of this.#releasing) await release(worktree.id)
         await this.#sessions.destroy(request.params.sessionId)
+        await this.attachments.destroy(request.params.sessionId)
         result = null
         break
       }

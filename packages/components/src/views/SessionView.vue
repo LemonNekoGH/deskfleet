@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { client } from "@deskfleet/client/platform"
 import UiButton from "../components/common/UiButton.vue"
 import { LoaderCircle, SquareTerminal } from "@lucide/vue"
 import { storeToRefs } from "pinia"
@@ -26,6 +27,7 @@ import { useTerminalsStore } from "../stores/terminals.ts"
 import { useFileTarget } from "../composables/useFileTarget.ts"
 import { useSessionLabel } from "../composables/useSessionLabel.ts"
 import { latestAgentUsage } from "../services/agent-usage.ts"
+import { buildPromptContent } from "../services/composer-attachments.ts"
 
 // xterm stays out of the session bundle until the panel is opened.
 const SessionTerminalPanel = defineAsyncComponent(() => import("../components/terminal/SessionTerminalPanel.vue"))
@@ -70,6 +72,7 @@ const forkDisabled = computed(() => !connected.value || !!view.value?.loading ||
 // A stopped or interrupted agent resumes on the next message; only a dead end is shown.
 const resumeUnavailable = computed(() => snapshot.value?.session.lifecycle === "ready" && run.value?.state !== "running" && !canResume.value)
 const draft = computed({ get: () => agents.drafts[props.sessionId] ?? "", set: value => { agents.drafts[props.sessionId] = value } })
+const attachments = computed({ get: () => agents.draftAttachments[props.sessionId] ?? [], set: value => { agents.draftAttachments[props.sessionId] = value } })
 const unresolvedSubmission = computed(() => Object.values(agents.operations).some(operation => operation.sessionId === props.sessionId && operation.text === draft.value))
 const pending = computed(() => Object.values(agents.operations).filter(operation => operation.sessionId === props.sessionId && operation.error))
 // Shells need the Session's own Worktree on this machine.
@@ -107,7 +110,14 @@ async function action(operation: () => Promise<unknown>): Promise<void> {
   finally { if (props.sessionId === sessionId) busy.value = false }
 }
 function submit(delivery: "backlog" | "steer"): void {
-  void action(() => agents.submit(props.sessionId, draft.value, delivery, delivery === "steer" ? activeTurn.value?.id : undefined))
+  void action(async () => {
+    const currentDraft = draft.value
+    const currentAttachments = attachments.value
+    const content = currentAttachments.length
+      ? await buildPromptContent({ draft: currentDraft, attachments: currentAttachments, sessionId: props.sessionId, target: resourceTarget.value, filesApi: client.files })
+      : currentDraft
+    await agents.submit(props.sessionId, content, delivery, delivery === "steer" ? activeTurn.value?.id : undefined, currentDraft)
+  })
 }
 async function showFork(snapshot: AgentSnapshot, sourceId: string): Promise<void> {
   await fleet.refreshLocalCatalog()
@@ -159,7 +169,7 @@ async function checkOperation(operationId: string): Promise<void> {
       <AgentBacklog :inputs="snapshot.inputs" :can-steer="canSteer" :disabled="!active || !connected || busy" @steer="id => action(() => agents.steer(sessionId, id, activeTurn!.id))" @withdraw="id => action(() => agents.withdraw(sessionId, id))" @retry="id => action(() => agents.retry(sessionId, id))" />
     </template>
   </div>
-  <SessionComposer v-if="location" v-model="draft" :location="location" :usage="usage" :disabled="!active || !connected || snapshot?.session.lifecycle !== 'ready' || unresolvedSubmission || (run?.state !== 'running' && !canResume)" :submitting="busy" :active-turn="!!activeTurn" :can-steer="canSteer" :can-cancel="!!activeTurn && activeTurn.state !== 'cancelling' && connected && !busy" @submit="submit" @cancel="action(() => agents.cancel(sessionId, activeTurn!.id))" />
+  <SessionComposer v-if="location" v-model="draft" v-model:attachments="attachments" :location="location" :usage="usage" :disabled="!active || !connected || snapshot?.session.lifecycle !== 'ready' || unresolvedSubmission || (run?.state !== 'running' && !canResume)" :submitting="busy" :active-turn="!!activeTurn" :can-steer="canSteer" :can-cancel="!!activeTurn && activeTurn.state !== 'cancelling' && connected && !busy" @submit="submit" @cancel="action(() => agents.cancel(sessionId, activeTurn!.id))" />
   <SessionTerminalPanel v-if="terminalPanelOpen && terminalWorktree" :key="terminalWorktree.id" :worktree="terminalWorktree" :read-only="!active" />
   <ForkSessionDialog v-if="forkOpen && snapshot" :key="sessionId" :context="forkContext" :allow-worktree="!!snapshot.session.workspaceId" :retrying="!!pendingFork" :disabled="(!pendingFork && !canFork) || forkDisabled || !location?.machine.online || busy" :confirm="fork" @close="forkOpen = false" />
   <div v-if="focusedMermaid" data-mermaid-focus-view class="absolute inset-0 z-20 flex flex-col bg-ui-canvas">

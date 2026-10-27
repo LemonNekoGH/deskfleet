@@ -1,6 +1,9 @@
 import { BrowserWindow, dialog, ipcMain, type WebContents } from "electron"
+import { daemonControlDirectory } from "@deskfleet/daemon"
 import type { CentralApi } from "@deskfleet/client/central"
-import { FILES_CHANGED_EVENT, FILES_IPC_CHANNEL, type FileConflict, type FileLocation, type FileResourceRequest, type FilesApi, type FileTarget, type FileTransfer } from "@deskfleet/client/files"
+import { FILES_CHANGED_EVENT, FILES_IPC_CHANNEL, type FileAttachmentUploadRequest, type FileConflict, type FileLocation, type FileResourceRequest, type FilesApi, type FileTarget, type FileTransfer } from "@deskfleet/client/files"
+import { activeMachineDirectory } from "../../../daemon/src/machine-directory.ts"
+import { SessionAttachments } from "../../../daemon/src/session-attachments.ts"
 import { DaemonClient } from "./daemon-client.ts"
 import { isDesktopMediaSender } from "./desktop-media.ts"
 import { createNativeFileEndpoint } from "./files-peer.ts"
@@ -33,6 +36,11 @@ function resource(value: unknown): FileResourceRequest {
   const input = object(value)
   return { target: target(input.target), sessionId: text(input.sessionId), uri: text(input.uri) }
 }
+function attachmentUpload(value: unknown): FileAttachmentUploadRequest {
+  const input = object(value)
+  if (!(input.data instanceof Uint8Array)) throw new Error("Invalid attachment data")
+  return { target: target(input.target), sessionId: text(input.sessionId), name: text(input.name), data: input.data }
+}
 
 /** Validate the narrow main-process bridge; the renderer never receives a raw filesystem API. */
 export async function invokeFiles(api: FilesApi, method: unknown, args: unknown): Promise<unknown> {
@@ -51,6 +59,10 @@ export async function invokeFiles(api: FilesApi, method: unknown, args: unknown)
     case "resolveResource": return api.resolveResource(resource(args[0]))
     case "readResource": return api.readResource(resource(args[0]))
     case "saveResource": return api.saveResource(resource(args[0]))
+    case "uploadAttachment": {
+      if (!api.uploadAttachment) throw new Error("Attachment upload is unavailable")
+      return api.uploadAttachment(attachmentUpload(args[0]))
+    }
     default: throw new Error("Unknown file operation")
   }
 }
@@ -65,6 +77,12 @@ export async function localSessionDirectory(sessionId: string): Promise<string> 
     if (!path) throw new Error("Session worktree is unavailable")
     return path
   } finally { client.close() }
+}
+
+export async function localSessionAttachmentDirectory(sessionId: string): Promise<string> {
+  await localSessionDirectory(sessionId)
+  const machineDirectory = await activeMachineDirectory(daemonControlDirectory())
+  return new SessionAttachments(machineDirectory).directory(sessionId)
 }
 
 /** Main owns queues; each renderer document receives its own revocable authority. */
@@ -91,6 +109,7 @@ export function installFiles(central: CentralApi): { close(): Promise<void> } {
     manager = new WindowFiles({
       remoteEndpoint: async target => createNativeFileEndpoint(central, target),
       sessionDirectory: localSessionDirectory,
+      sessionAttachmentDirectory: localSessionAttachmentDirectory,
       chooseDirectory: async () => {
         const result = await dialog.showOpenDialog(window, {
           title: "Choose a local folder",

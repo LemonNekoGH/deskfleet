@@ -1,6 +1,6 @@
 import type { FileEndpoint } from "../../../daemon/src/files-protocol.ts"
 import { FileTransferManager } from "@deskfleet/client/file-transfers"
-import type { FileConflict, FileListing, FileResourceRequest, FilesApi, FileTarget, FileTransfer, FileTransferRequest } from "@deskfleet/client/files"
+import type { FileAttachmentUploadRequest, FileAttachmentUploadResult, FileConflict, FileListing, FileResourceRequest, FilesApi, FileTarget, FileTransfer, FileTransferRequest } from "@deskfleet/client/files"
 import { FileGrants } from "./files-grants.ts"
 
 interface FileDialogs {
@@ -14,6 +14,7 @@ export class WindowFiles implements FilesApi {
   readonly #manager: FileTransferManager
   readonly #dialogs: FileDialogs
   readonly #sessionDirectory: (sessionId: string) => Promise<string>
+  readonly #sessionAttachmentDirectory?: (sessionId: string) => Promise<string>
   readonly #sessionTargets = new Map<string, Promise<FileTarget>>()
   #localTarget: Promise<FileTarget> | undefined
   #closed = false
@@ -21,10 +22,15 @@ export class WindowFiles implements FilesApi {
   constructor(options: FileDialogs & {
     remoteEndpoint(target: Extract<FileTarget, { kind: "machine" }>): Promise<FileEndpoint>
     sessionDirectory(sessionId: string): Promise<string>
+    sessionAttachmentDirectory?(sessionId: string): Promise<string>
   }) {
     this.#dialogs = options
     this.#sessionDirectory = options.sessionDirectory
-    this.#grants = new FileGrants({ confirmOverwrite: path => options.confirmOverwrite(path) })
+    this.#sessionAttachmentDirectory = options.sessionAttachmentDirectory
+    this.#grants = new FileGrants({
+      confirmOverwrite: path => options.confirmOverwrite(path),
+      sessionAttachmentDirectory: options.sessionAttachmentDirectory,
+    })
     this.#manager = new FileTransferManager({
       endpoint: async target => target.kind === "local" ? this.#grants.endpoint(target) : options.remoteEndpoint(target),
       chooseLocalDirectory: () => this.chooseLocalDirectory(),
@@ -67,8 +73,14 @@ export class WindowFiles implements FilesApi {
       target = this.#live(async () => {
         // Only the daemon supplies the captured root; the renderer supplies a Session identifier.
         const directory = await this.#sessionDirectory(sessionId)
+        const attachmentDirectory = await this.#sessionAttachmentDirectory?.(sessionId)
         this.#check()
-        return this.#grants.issue(directory, { read: true, write: false, sessionId })
+        return this.#grants.issue(directory, {
+          read: true,
+          write: false,
+          sessionId,
+          ...(attachmentDirectory ? { additionalRoots: [attachmentDirectory] } : {}),
+        })
       }).catch(error => { this.#sessionTargets.delete(sessionId); throw error })
       this.#sessionTargets.set(sessionId, target)
     }
@@ -94,6 +106,12 @@ export class WindowFiles implements FilesApi {
   resolveResource(request: FileResourceRequest) { return this.#live(async () => this.#manager.resolveResource(await this.#resource(request))) }
   readResource(request: FileResourceRequest) { return this.#live(async () => this.#manager.readResource(await this.#resource(request))) }
   saveResource(request: FileResourceRequest) { return this.#live(async () => this.#manager.saveResource(await this.#resource(request))) }
+  uploadAttachment(request: FileAttachmentUploadRequest): Promise<FileAttachmentUploadResult> {
+    return this.#live(async () => {
+      const target = await this.#target(request.target)
+      return this.#manager.uploadAttachment({ ...request, target })
+    })
+  }
 
   async close(): Promise<void> {
     if (this.#closed) return

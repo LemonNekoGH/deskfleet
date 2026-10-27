@@ -6,7 +6,7 @@ import { AgentJournal, errorMessage, requireActiveSession, timestamp } from "./a
 import type { AgentCommand, AgentInput, AgentPermission, AgentRun, AgentSnapshot, AgentTurn } from "./agent-protocol.ts"
 
 import { applyAgentConfiguration, readAgentConfiguration } from "./agent-configuration.ts"
-import { agentConfiguration, type AgentConfiguration, type AgentConfigurationSelection } from "./agent-configuration-protocol.ts"
+import { agentConfiguration, agentPromptCapabilities, type AgentConfiguration, type AgentConfigurationSelection } from "./agent-configuration-protocol.ts"
 import { savedAgentConfiguration } from "./agent-session-configuration.ts"
 import { withRestoredSessionMode } from "./agents/session-modes.ts"
 import { AgentElicitations } from "./agent-elicitations.ts"
@@ -96,11 +96,14 @@ export class AgentRuntime {
     // requires that its launch settings still exist.
     try { this.#providerName = this.#resolveProvider(providerId).config.name } catch {}
     const identity = { id: providerId, name: this.#providerName ?? providerId }
-    if (snapshot.session.archiveState !== "active" || this.running || !snapshot.session.error) return agentConfiguration(this.#configuration ?? saved.options, identity)
+    const promptCapabilities = snapshot.session.capabilities?.promptCapabilities
+    if (snapshot.session.archiveState !== "active" || this.running || !snapshot.session.error) {
+      return agentConfiguration(this.#configuration ?? saved.options, identity, promptCapabilities)
+    }
     // Discover alternatives without resuming the failed conversation, changing
     // its saved selection, or releasing any pending inputs.
     let available: AgentConfiguration
-    if (this.#availableConfiguration?.length) available = agentConfiguration(this.#availableConfiguration, identity)
+    if (this.#availableConfiguration?.length) available = agentConfiguration(this.#availableConfiguration, identity, promptCapabilities)
     else {
       const previousStop = this.#stop
       await previousStop
@@ -278,12 +281,18 @@ export class AgentRuntime {
       await this.#recordConfiguration(providerSessionId, configOptions)
       if (this.#stopping) throw new Error("Agent startup was stopped")
       run.state = "running"
+      const promptCapabilities = agentPromptCapabilities(capabilities?.promptCapabilities)
       await this.journal.serial(this.sessionId, async () => {
         const current = await this.journal.read(this.sessionId)
         requireActiveSession(current.session)
         const session = {
           ...current.session, providerSessionId, lifecycle: "ready" as const, error: undefined, updatedAt: timestamp(),
-          capabilities: { steering: supportsSteering(connection.initialization), resume: canContinueSession(connection.initialization), fork: !!capabilities?.sessionCapabilities?.fork && !!connection.forkSession },
+          capabilities: {
+            steering: supportsSteering(connection.initialization),
+            resume: canContinueSession(connection.initialization),
+            fork: !!capabilities?.sessionCapabilities?.fork && !!connection.forkSession,
+            ...(promptCapabilities ? { promptCapabilities } : {}),
+          },
         }
         await this.journal.commit(current, { session, runs: [run], events: [
           this.journal.event(this.sessionId, "session", session), this.journal.event(this.sessionId, "run", run),
@@ -444,8 +453,13 @@ export class AgentRuntime {
       const snapshot = await this.journal.read(this.sessionId)
       requireActiveSession(snapshot.session)
       if (!this.running) throw new Error("Agent stopped before delivery")
+      const prompt = await this.#catalog.attachments.preparePrompt(
+        this.sessionId,
+        input.content,
+        connection.initialization.agentCapabilities?.promptCapabilities ?? undefined,
+      )
       sent = true
-      const result = await connection.steer({ sessionId: snapshot.session.providerSessionId!, prompt: input.content }, command.id)
+      const result = await connection.steer({ sessionId: snapshot.session.providerSessionId!, prompt }, command.id)
       if (result.outcome === "inactive") {
         await active.completion
         if (!this.running) throw new Error("The Agent stopped before this input could start")
@@ -493,9 +507,18 @@ export class AgentRuntime {
     let done!: () => void
     const completion = new Promise<void>(resolve => { done = resolve })
     this.#active = { turn, completion }
-    void connection.prompt({ sessionId: snapshot.session.providerSessionId!, prompt: input.content }).then(
+    let sent = false
+    void (async () => {
+      const prompt = await this.#catalog.attachments.preparePrompt(
+        this.sessionId,
+        input.content,
+        connection.initialization.agentCapabilities?.promptCapabilities ?? undefined,
+      )
+      sent = true
+      return await connection.prompt({ sessionId: snapshot.session.providerSessionId!, prompt })
+    })().then(
       result => this.#finish(turn, inputId, command, result),
-      error => this.#finish(turn, inputId, command, undefined, error),
+      error => this.#finish(turn, inputId, command, undefined, error, sent),
     ).catch(error => console.error("Could not persist Agent turn completion", error)).finally(() => {
       if (this.#active?.turn.id === turn.id) this.#active = undefined
       done()

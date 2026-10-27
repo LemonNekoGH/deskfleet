@@ -34,9 +34,46 @@ function id(value: unknown, field: string): string {
 }
 function content(value: unknown): ContentBlock[] {
   if (!Array.isArray(value) || !value.length || value.length > 100) throw new Error("A message is required")
-  for (const block of value) {
-    if (!block || block.type !== "text" || typeof block.text !== "string" || !block.text.trim()) throw new Error("Only nonempty text messages are supported")
+  let hasText = false
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Only nonempty text messages are supported")
+    const block = item as Record<string, unknown>
+    if (block.type === "text") {
+      if (typeof block.text !== "string" || !block.text.trim()) throw new Error("Only nonempty text messages are supported")
+      hasText = true
+      continue
+    }
+    if (block.type === "image") {
+      if (typeof block.mimeType !== "string" || !/^image\/[a-z0-9.+-]+$/iu.test(block.mimeType)
+        || typeof block.data !== "string" || !block.data.length || !/^[A-Za-z0-9+/]+={0,2}$/u.test(block.data)) {
+        throw new Error("Invalid image attachment")
+      }
+      continue
+    }
+    if (block.type === "resource") {
+      const resource = block.resource
+      if (!resource || typeof resource !== "object" || Array.isArray(resource)) throw new Error("Invalid text resource attachment")
+      const record = resource as Record<string, unknown>
+      if (typeof record.uri !== "string" || !record.uri.length || record.uri.length > 2048 || record.uri.includes("\0")
+        || typeof record.text !== "string" || !record.text.trim()
+        || (record.mimeType !== undefined && record.mimeType !== null && (typeof record.mimeType !== "string" || !record.mimeType.length || record.mimeType.length > 256))) {
+        throw new Error("Invalid text resource attachment")
+      }
+      hasText = true
+      continue
+    }
+    if (block.type === "resource_link") {
+      if (typeof block.uri !== "string" || !/^file:\/\/\//iu.test(block.uri) || block.uri.length > 4096 || block.uri.includes("\0")
+        || typeof block.name !== "string" || !block.name.trim() || block.name.length > 512 || block.name.includes("\0")
+        || (block.mimeType !== undefined && block.mimeType !== null && (typeof block.mimeType !== "string" || !block.mimeType.length || block.mimeType.length > 256))
+        || (block.size !== undefined && block.size !== null && (typeof block.size !== "number" || !Number.isSafeInteger(block.size) || block.size < 0))) {
+        throw new Error("Invalid file attachment")
+      }
+      continue
+    }
+    throw new Error("Only nonempty text messages are supported")
   }
+  if (!hasText) throw new Error("Only nonempty text messages are supported")
   return value as ContentBlock[]
 }
 function canonical(value: unknown): string {
@@ -157,6 +194,12 @@ export class AgentSessions {
     const directory = worktree?.directories[0]?.path
     if (!directory) throw new Error("Session worktree is unavailable")
     return directory
+  }
+  async sessionAttachmentDirectory(sessionId: string): Promise<string> {
+    const { session } = await this.journal.read(id(sessionId, "Session ID"))
+    requireActiveSession(session)
+    if (session.lifecycle !== "ready") throw new Error("This Session has no usable execution context")
+    return this.#catalog.attachments.directory(sessionId)
   }
   onSessionArchive(listener: (worktreeId: string) => Promise<void>): () => void {
     this.#archiveListeners.add(listener)
@@ -436,7 +479,8 @@ export class AgentSessions {
         requestedTurnId: command.params.turnId === undefined ? undefined : id(command.params.turnId, "Turn ID"), createdAt: timestamp(),
         ...(delivery === "steer" ? { dispatchCommandId: command.id, dispatcher: command.actor } : {}),
       }
-      const title = snapshot.session.title || blocks.map(block => block.type === "text" ? block.text : "").join(" ").slice(0, 100)
+      const titleSource = blocks.map(block => block.type === "text" ? block.text : block.type === "resource" && "text" in block.resource ? block.resource.text : "").filter(Boolean).join(" ").trim()
+      const title = snapshot.session.title || (titleSource.split(/\r?\n/u)[0] ?? "").slice(0, 100)
       const session = { ...snapshot.session, title, updatedAt: timestamp() }
       await this.journal.commit(snapshot, { session, inputs: [input], command: { ...command, status: delivery === "steer" ? "accepted" : "completed", result: receipt, completedAt: delivery === "steer" ? undefined : timestamp() }, events: [
         this.journal.event(sessionId, "input", input), this.journal.event(sessionId, "session", session),

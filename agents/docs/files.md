@@ -72,9 +72,10 @@ the complete item. Revocation also prevents pending selection/confirmation dialo
 from continuing access after their document or account has ended.
 
 Local Agent previews load automatically. Main resolves the Session's captured
-first directory through its daemon connection on the first resource request and
+first directory and its daemon-managed `<machine directory>/session-attachments/<sessionId>/`
+directory through its daemon connection on the first resource request and
 retains a read-only grant bound to that Session and the current window/account.
-Absolute references, file URLs, and relative paths must stay within it; the renderer
+Absolute references, file URLs, and relative paths must stay within those roots; the renderer
 cannot supply the captured root. The endpoint checks path containment and rejects
 symlink and junction escapes for these Session grants. These path checks are not a
 race-safe filesystem sandbox against another local process replacing entries
@@ -113,7 +114,10 @@ work. Native and browser receivers serialize each upload's mutations; browser
 abort bypasses that queue to interrupt publication and reject pending writes.
 
 The endpoint operations are `list`, `stat`, `resolve`, `read`, `begin`, `mkdir`,
-`write`, `finish`, `commit`, and `abort`. An upload's paths are relative to its
+`write`, `finish`, `commit`, and `abort`. `begin` accepts either a destination
+`directory` or a `sessionId` that targets the Session's daemon-managed
+`<machine directory>/session-attachments/<sessionId>/` directory for composer
+file attachments. An upload's paths are relative to its
 selected root: the empty path names a root file or directory, and slash-separated
 paths name descendants. Absolute paths, traversal segments, backslashes, and
 alternate-stream colons are rejected in upload paths. Reads and writes check

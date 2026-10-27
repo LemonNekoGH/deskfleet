@@ -117,8 +117,8 @@
     "deleteTitle": "删除“{title}”？",
     "deleteHint": "后续运行将停止。已有会话及其文件会保留。",
     "recentRuns": "最近运行",
-    "noRuns": "尚无运行记录。可使用“立即运行”试运行此任务。",
-    "noRunsShort": "尚无运行",
+    "noRuns": "暂无运行记录。可使用“立即运行”试运行此任务。",
+    "noRunsShort": "暂无运行",
     "openSession": "打开会话",
     "runState": {
       "claimed": "正在启动",
@@ -279,6 +279,14 @@
     "placeholder": "描述要交给智能体的任务",
     "provider": "Agent",
     "send": "发送",
+    "attach": "添加附件",
+    "attachments": "附件",
+    "uploadLocalFiles": "上传本地文件",
+    "chooseMachineFiles": "从目标机器选择文件",
+    "pastedText": "粘贴的文本",
+    "pastedTextLines": "{n} 行",
+    "removeAttachment": "移除 {name}",
+    "dropFiles": "拖放文件以添加附件",
     "context": "会话上下文",
     "contextChoice": "会话上下文：{context}",
     "contextOption": {
@@ -496,6 +504,12 @@
     "editPath": "编辑路径",
     "applyPath": "确认路径"
   },
+  "filePicker": {
+    "title": "选择文件",
+    "empty": "此位置没有文件或文件夹。",
+    "showHidden": "显示隐藏项目",
+    "select": "添加所选文件"
+  },
   "agent": {
     "conversation": "对话",
     "usage": {
@@ -511,6 +525,10 @@
     "system": "系统",
     "sourceMachine": "机器 {id}",
     "image": "Agent 图片",
+    "pastedText": "粘贴的文本",
+    "pastedTextLines": "{n} 行",
+    "expandText": "展开全部",
+    "collapseText": "收起",
     "contentType": "{type} 内容",
     "tool": "工具调用",
     "thinking": "思考",
@@ -641,7 +659,7 @@
     "offline": "请在偏好设置中启动本地 Agent，以管理 Providers。",
     "remoteUnavailable": "暂时无法管理这台机器的 Provider 设置。",
     "actions": "{name} 的操作",
-    "empty": "尚无 Provider",
+    "empty": "暂无 Provider",
     "emptyDescription": "添加 Agent Provider，以在这台机器上创建会话。",
     "environmentCount": "{n} 个环境变量",
     "removeQuestion": "移除 {name}？",

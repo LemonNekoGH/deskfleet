@@ -1,7 +1,7 @@
 import type { ContentBlock, CreateElicitationRequest, CreateElicitationResponse, RequestPermissionRequest, SessionNotification } from "@agentclientprotocol/sdk/unstable"
 import type { GitDiffRequest, GitFileDiff, GitStatusSnapshot } from "./git-protocol.ts"
 
-import type { AgentConfiguration, AgentConfigurationParams, AgentConfigurationSelection } from "./agent-configuration-protocol.ts"
+import type { AgentConfiguration, AgentConfigurationParams, AgentConfigurationSelection, AgentPromptCapabilities } from "./agent-configuration-protocol.ts"
 
 export const AGENT_CHANNEL = "deskfleet-acp"
 export const AGENT_CHUNK_BYTES = 16 * 1024
@@ -32,7 +32,7 @@ export interface AgentSessionRecord {
   lastEventSeq: string
   createdAt: string
   updatedAt: string
-  capabilities?: { steering: boolean; resume: boolean; fork?: boolean }
+  capabilities?: { steering: boolean; resume: boolean; fork?: boolean; promptCapabilities?: AgentPromptCapabilities }
   error?: string
 }
 

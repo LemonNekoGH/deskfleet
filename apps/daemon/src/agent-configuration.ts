@@ -1,5 +1,5 @@
 import type * as acp from "@agentclientprotocol/sdk/unstable"
-import { agentConfiguration, selectAgentOption, selectReasoningEffort, type AgentConfiguration, type AgentConfigurationParams, type AgentConfigurationSelection } from "./agent-configuration-protocol.ts"
+import { agentConfiguration, agentPromptCapabilities, selectAgentOption, selectReasoningEffort, type AgentConfiguration, type AgentConfigurationParams, type AgentConfigurationSelection } from "./agent-configuration-protocol.ts"
 import type { AgentConfig, AgentConnection, AgentProvider } from "./agents/acp.ts"
 import { codexProvider } from "./agents/codex.ts"
 
@@ -73,7 +73,11 @@ export async function readAgentConfiguration(
     } else options = await applyAgentConfiguration(agent, session.sessionId, options, params)
     signal.throwIfAborted()
     dependencies.onOptions?.(options)
-    return agentConfiguration(options, { id: params.provider, name: config.name })
+    return agentConfiguration(
+      options,
+      { id: params.provider, name: config.name },
+      agentPromptCapabilities(agent.initialization.agentCapabilities?.promptCapabilities),
+    )
   })()
   try {
     return await Promise.race([discovery, cancelled])

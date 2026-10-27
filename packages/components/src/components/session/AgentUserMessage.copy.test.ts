@@ -12,7 +12,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-test("copy writes all message text and shows confirmation only after it succeeds", async () => {
+test("copy writes all message text including folded pasted text and shows confirmation only after it succeeds", async () => {
   vi.useFakeTimers()
   let complete!: () => void
   const writeText = vi.spyOn(navigator.clipboard, "writeText").mockImplementation(() => new Promise<void>(resolve => { complete = resolve }))
@@ -20,12 +20,18 @@ test("copy writes all message text and shows confirmation only after it succeeds
     props: { input: agentInput({ content: [
       { type: "text", text: "First paragraph" },
       { type: "image", mimeType: "image/png", data: "image" },
+      { type: "resource", resource: { uri: "deskfleet://pasted-text/1.txt", mimeType: "text/plain", text: "Folded log line 1\nFolded log line 2" } },
       { type: "text", text: "Second paragraph" },
     ] }) },
     global: { plugins: [i18n] },
   })
+  expect(wrapper.find("[data-pasted-resource]").exists()).toBe(true)
+  expect(wrapper.get("[data-pasted-resource]").text()).toContain("Pasted text")
+  expect(wrapper.get("[data-pasted-resource]").text()).toContain("2 lines")
+  await wrapper.get("[data-pasted-resource] button").trigger("click")
+  expect(wrapper.get("[data-pasted-resource]").text()).toContain("Collapse")
   await wrapper.get('[aria-label="Copy message"]').trigger("click")
-  expect(writeText).toHaveBeenCalledExactlyOnceWith("First paragraph\n\nSecond paragraph")
+  expect(writeText).toHaveBeenCalledExactlyOnceWith("First paragraph\n\nFolded log line 1\nFolded log line 2\n\nSecond paragraph")
   expect(wrapper.find('[aria-label="Copied"]').exists()).toBe(false)
   complete()
   await flushPromises()

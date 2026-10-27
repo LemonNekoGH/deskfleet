@@ -157,7 +157,10 @@ export class AuthorizedPeers {
       }
       if (purpose === "files") {
         owned.files = new FilesChannel(
-          new FilesService(this.#agents.sessionDirectory ? sessionId => this.#agents.sessionDirectory!(sessionId) : undefined),
+          new FilesService(
+            this.#agents.sessionDirectory ? sessionId => this.#agents.sessionDirectory!(sessionId) : undefined,
+            this.#agents.sessionAttachmentDirectory ? sessionId => this.#agents.sessionAttachmentDirectory!(sessionId) : undefined,
+          ),
           data => peer.sendData(FILES_CHANNEL, Buffer.from(data)),
           method => { this.#live(params.peerId, fileAction(method)) },
           failure,

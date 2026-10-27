@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { lstat, realpath, stat } from "node:fs/promises"
+import { lstat, mkdir, realpath, stat } from "node:fs/promises"
 import { basename, dirname, join, posix, win32 } from "node:path"
 import type { FileTarget } from "@deskfleet/client/files"
 import { defaultDirectory, fileError, sessionResourcePath, uploadPath } from "../../../daemon/src/files-paths.ts"
@@ -8,8 +8,8 @@ import { FilesService } from "../../../daemon/src/files-service.ts"
 
 type LocalTarget = Extract<FileTarget, { kind: "local" }>
 type Permission = "read" | "write"
-interface Permissions { read: boolean; write: boolean; sessionId?: string }
-interface Grant extends Permissions { root: string; scope: "folder" | "filesystem" }
+interface Permissions { read: boolean; write: boolean; sessionId?: string; additionalRoots?: string[] }
+interface Grant extends Permissions { root: string; scope: "folder" | "filesystem"; additionalRoots: string[] }
 interface Upload { directory: string; name: string }
 
 const denied = () => fileError("Local file access has expired; reopen the file transfer panel", "file_grant_required")
@@ -57,10 +57,12 @@ export class FileGrants {
   readonly #grants = new Map<string, Grant>()
   readonly #endpoints = new Set<GrantedFilesEndpoint>()
   readonly #confirmOverwrite: (path: string) => Promise<boolean>
+  readonly #sessionAttachmentDirectory?: (sessionId: string) => Promise<string>
   #active = true
 
-  constructor(options: { confirmOverwrite?(path: string): Promise<boolean> } = {}) {
+  constructor(options: { confirmOverwrite?(path: string): Promise<boolean>; sessionAttachmentDirectory?(sessionId: string): Promise<string> } = {}) {
     this.#confirmOverwrite = options.confirmOverwrite ?? (async () => false)
+    this.#sessionAttachmentDirectory = options.sessionAttachmentDirectory
   }
 
   #checkActive(): void { if (!this.#active) throw denied() }
@@ -86,9 +88,15 @@ export class FileGrants {
     absoluteGrantPath(root)
     const canonical = await realpath(root)
     if (!(await stat(canonical)).isDirectory()) throw fileError("Select a folder", "invalid")
+    const additionalRoots: string[] = []
+    for (const extra of permissions.additionalRoots ?? []) {
+      const candidate = absoluteGrantPath(extra)
+      const resolved = await realpath(candidate).catch(() => candidate)
+      additionalRoots.push(resolved)
+    }
     this.#checkActive()
     const grantId = randomUUID()
-    this.#grants.set(grantId, { ...permissions, root: canonical, scope })
+    this.#grants.set(grantId, { ...permissions, root: canonical, scope, additionalRoots })
     return { kind: "local", grantId }
   }
 
@@ -99,7 +107,17 @@ export class FileGrants {
     // Session previews stay in their captured tree; transfers follow OS filesystem access.
     if (grant.scope === "folder" && await realpath(grant.root) !== grant.root) throw outside()
     const canonical = await realpath(candidate)
-    if (grant.scope === "folder") canonicalGrantedPath(grant.root, canonical)
+    if (grant.scope === "folder") {
+      const roots = [grant.root]
+      for (const extra of grant.additionalRoots) {
+        roots.push(await realpath(extra).catch(() => extra))
+      }
+      const allowed = roots.some(root => {
+        try { canonicalGrantedPath(root, canonical); return true }
+        catch { return false }
+      })
+      if (!allowed) throw outside()
+    }
     this.#get(target)
     return canonical
   }
@@ -134,7 +152,7 @@ export class FileGrants {
 
   endpoint(target: FileTarget): FileEndpoint {
     const grant = this.#get(target)
-    const endpoint = new GrantedFilesEndpoint(this, { ...target } as LocalTarget, grant.scope)
+    const endpoint = new GrantedFilesEndpoint(this, { ...target } as LocalTarget, grant.scope, this.#sessionAttachmentDirectory)
     this.#endpoints.add(endpoint)
     return endpoint
   }
@@ -156,12 +174,24 @@ class GrantedFilesEndpoint implements FileEndpoint {
   readonly #grants: FileGrants
   readonly #target: LocalTarget
   readonly #scope: Grant["scope"]
-  readonly #service = new FilesService()
+  readonly #service: FilesService
+  readonly #sessionAttachmentDirectory?: (sessionId: string) => Promise<string>
   readonly #uploads = new Map<string, Upload>()
   #running: Promise<unknown> = Promise.resolve()
   #closed = false
 
-  constructor(grants: FileGrants, target: LocalTarget, scope: Grant["scope"]) { this.#grants = grants; this.#target = target; this.#scope = scope }
+  constructor(
+    grants: FileGrants,
+    target: LocalTarget,
+    scope: Grant["scope"],
+    sessionAttachmentDirectory?: (sessionId: string) => Promise<string>,
+  ) {
+    this.#grants = grants
+    this.#target = target
+    this.#scope = scope
+    this.#sessionAttachmentDirectory = sessionAttachmentDirectory
+    this.#service = new FilesService(undefined, sessionAttachmentDirectory)
+  }
 
   call<M extends FileMethod>(method: M, params: FileMethods[M]["params"], data?: Uint8Array): Promise<FileReply<FileMethods[M]["result"]>> {
     const next = this.#running.then(async () => {
@@ -211,7 +241,12 @@ class GrantedFilesEndpoint implements FileEndpoint {
       }
       case "begin": {
         const request = params as FileMethods["begin"]["params"]
-        const directory = await this.#grants.assert(this.#target, "write", request.directory)
+        let rawDirectory = request.directory
+        if (!rawDirectory && request.sessionId && this.#sessionAttachmentDirectory) {
+          rawDirectory = await this.#sessionAttachmentDirectory(request.sessionId)
+          await mkdir(rawDirectory, { recursive: true, mode: 0o700 })
+        }
+        const directory = await this.#grants.assert(this.#target, "write", rawDirectory)
         await this.#grants.destination(this.#target, directory, request.name)
         if (request.conflict === "replace") await this.#grants.overwrite(this.#target, directory, request.name)
         const reply = await this.#service.call("begin", { ...request, directory })

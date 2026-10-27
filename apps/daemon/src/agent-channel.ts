@@ -8,6 +8,7 @@ import {
 export interface AgentChannelSessions {
   readonly journal: { readonly identity: unknown }
   sessionDirectory?(sessionId: string): Promise<string>
+  sessionAttachmentDirectory?(sessionId: string): Promise<string>
   handle(method: AgentMethod, params: unknown, actor: AgentActor): Promise<unknown>
   onEvent(listener: (event: AgentEvent) => void): () => void
   watchGit?(sessionId: string, actor: AgentActor, listener: (error?: string) => void): Promise<() => void>

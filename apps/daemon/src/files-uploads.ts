@@ -36,10 +36,25 @@ async function publish(upload: Upload, path: string): Promise<void> {
 
 /** Staging belongs to one endpoint; close and abort remove only its unfinished work. */
 export class FileUploads {
+  readonly #sessionAttachmentDirectory?: (sessionId: string) => Promise<string>
   readonly #uploads = new Map<string, Upload>()
 
+  constructor(sessionAttachmentDirectory?: (sessionId: string) => Promise<string>) {
+    this.#sessionAttachmentDirectory = sessionAttachmentDirectory
+  }
+
+  async #attachmentDirectory(sessionId: unknown): Promise<string> {
+    const id = text(sessionId, "Session ID")
+    if (!this.#sessionAttachmentDirectory) throw fileError("Session attachments are unavailable", "unsupported")
+    const dir = await this.#sessionAttachmentDirectory(id)
+    await mkdir(dir, { recursive: true, mode: 0o700 })
+    return directoryPath(dir)
+  }
+
   async begin(params: FileMethods["begin"]["params"]): Promise<FileMethods["begin"]["result"]> {
-    const directory = await directoryPath(params.directory)
+    const directory = params.sessionId !== undefined
+      ? await this.#attachmentDirectory(params.sessionId)
+      : await directoryPath(params.directory)
     const parts = uploadPath(params.name)
     if (parts.length !== 1) throw fileError("Select one file or folder name", "invalid")
     if (params.kind !== "file" && params.kind !== "directory") throw fileError("Invalid file kind", "invalid")

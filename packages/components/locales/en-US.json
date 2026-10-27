@@ -279,6 +279,14 @@
     "placeholder": "Describe a task for the agent",
     "provider": "Agent",
     "send": "Send",
+    "attach": "Add attachment",
+    "attachments": "Attachments",
+    "uploadLocalFiles": "Upload local files",
+    "chooseMachineFiles": "Choose file from machine",
+    "pastedText": "Pasted text",
+    "pastedTextLines": "{n} line | {n} lines",
+    "removeAttachment": "Remove {name}",
+    "dropFiles": "Drop files to attach",
     "context": "Session context",
     "contextChoice": "Session context: {context}",
     "contextOption": {
@@ -496,6 +504,12 @@
     "editPath": "Edit path",
     "applyPath": "Apply path"
   },
+  "filePicker": {
+    "title": "Choose files",
+    "empty": "No files or folders in this location.",
+    "showHidden": "Show hidden items",
+    "select": "Attach selected"
+  },
   "agent": {
     "conversation": "Conversation",
     "usage": {
@@ -511,6 +525,10 @@
     "system": "System",
     "sourceMachine": "Machine {id}",
     "image": "Agent image",
+    "pastedText": "Pasted text",
+    "pastedTextLines": "{n} line | {n} lines",
+    "expandText": "Show all",
+    "collapseText": "Collapse",
     "contentType": "{type} content",
     "tool": "Tool call",
     "thinking": "Thinking",

@@ -11,12 +11,16 @@ import { FilesService } from "./files-service.ts"
 
 async function fixture(context: TestContext) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "deskfleet-files-")))
+  const attachments = join(directory, "session-attachments")
   const service = new FilesService(async id => {
     assert.equal(id, "12")
     return directory
+  }, async id => {
+    assert.equal(id, "12")
+    return join(attachments, id)
   })
   context.after(async () => { await service.close(); await rm(directory, { recursive: true, force: true }) })
-  return { directory, service }
+  return { directory, attachments, service }
 }
 
 test("Session resources use captured cwd and return bounded binary reads", async context => {
@@ -38,6 +42,17 @@ test("Session resources use captured cwd and return bounded binary reads", async
   const literal = join(directory, "literal#L12")
   await writeFile(literal, "fragment is part of the name")
   assert.equal((await service.call("resolve", { sessionId: "12", uri: "literal%23L12" })).value.path, literal)
+})
+
+test("session attachment upload writes into the managed session-attachments directory", async context => {
+  const { attachments, service } = await fixture(context)
+  const { transferId } = (await service.call("begin", { sessionId: "12", name: "spec.txt", kind: "file", conflict: "rename" })).value
+  const payload = Buffer.from("attachment content\n")
+  await service.call("write", { transferId, path: "", offset: 0 }, payload)
+  await service.call("finish", { transferId, path: "", size: payload.byteLength })
+  const committed = (await service.call("commit", { transferId })).value
+  assert.equal(committed.path, await realpath(join(attachments, "12", "spec.txt")))
+  assert.deepEqual(await readFile(committed.path), payload)
 })
 
 test("folder upload commits one complete root and preserves empty files and directories", async context => {

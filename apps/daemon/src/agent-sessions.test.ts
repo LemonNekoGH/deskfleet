@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 import { setTimeout as delay } from "node:timers/promises"
 import { test } from "node:test"
@@ -29,7 +30,9 @@ class Provider implements AgentProvider {
   id = "fixture"
   client!: AgentClient
   prompts: string[] = []
+  promptBlocks: acp.ContentBlock[][] = []
   promptConfigurations: { model: string; effort: string }[] = []
+  promptCapabilities: { image?: boolean; embeddedContext?: boolean } = {}
   model = "first"
   effort = "high"
   failConfiguration = false
@@ -60,8 +63,8 @@ class Provider implements AgentProvider {
     this.configs.push(structuredClone(config))
     return {
       initialization: this.loadSession
-        ? { protocolVersion: 1, agentCapabilities: { loadSession: true, sessionCapabilities: { additionalDirectories: {} } }, _meta: { steering: { supported: true, supportsPromptRequired: true } } }
-        : { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { resume: {}, additionalDirectories: {} } }, _meta: { steering: { supported: true, supportsPromptRequired: true } } },
+        ? { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: this.promptCapabilities, sessionCapabilities: { additionalDirectories: {} } }, _meta: { steering: { supported: true, supportsPromptRequired: true } } }
+        : { protocolVersion: 1, agentCapabilities: { promptCapabilities: this.promptCapabilities, sessionCapabilities: { resume: {}, additionalDirectories: {} } }, _meta: { steering: { supported: true, supportsPromptRequired: true } } },
       newSession: async params => { this.cwds.push(params.cwd); return { sessionId: "provider-conversation", configOptions: this.configuration() } },
       resume: async params => { this.resumes.push(params.sessionId); await this.resumeWait?.promise; return { configOptions: this.configuration() } },
       setConfigOption: async params => {
@@ -74,11 +77,12 @@ class Provider implements AgentProvider {
       },
       prompt: async params => {
         this.promptConfigurations.push({ model: this.model, effort: this.effort })
+        this.promptBlocks.push(structuredClone(params.prompt))
         this.prompts.push(params.prompt.map(item => item.type === "text" ? item.text : "").join(""))
         let resolve!: (result: acp.PromptResponse) => void
         const done = new Promise<acp.PromptResponse>(finish => { resolve = finish })
         this.active = { resolve, done }
-        await client.onUpdate({ sessionId: params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "working 中文\n" } } })
+        await client.onUpdate({ sessionId: params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "working \u4e2d\u6587\n" } } })
         if (this.finishImmediately) this.finish()
         return done
       },
@@ -164,7 +168,7 @@ test("archive retains files and history, cancels approval and questions, and res
   const questionResult = f.provider.askQuestion()
   const before = await until(f.read, state => state.permissions.some(permission => permission.state === "pending") && state.elicitations.some(question => question.state === "pending"))
   const pendingPermission = before.permissions.find(permission => permission.state === "pending")!
-  const pendingQuestion = before.elicitations.find(question => question.state === "pending")!
+  const pendingQuestion = before.elicitations.find(question => question.id === before.elicitations[0]!.id)!
   const closed: string[] = []
   f.service.onSessionArchive(async id => { closed.push(id) })
   const archive = { sessionId: f.sessionId, operationId: randomUUID() }
@@ -945,4 +949,46 @@ test("failed configuration recovery keeps the configured provider and applies it
   await until(() => restored.journal.read(sessionId), () => f.provider.prompts.length === 1)
   assert.deepEqual(f.provider.promptConfigurations, [{ model: "second", effort: "low" }])
   await restored.close()
+})
+
+test("attachments require text or folded pasted text, degrade to session-attachments when unsupported, and clean up on session deletion", async t => {
+  const f = await setup(t)
+  f.provider.finishImmediately = true
+  const imageBytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+  const imageBase64 = imageBytes.toString("base64")
+  await assert.rejects(f.service.handle("_deskfleet/input/submit", {
+    sessionId: f.sessionId,
+    operationId: randomUUID(),
+    content: [{ type: "image", mimeType: "image/png", data: imageBase64 }],
+    delivery: "backlog",
+  }, f.actor), /Only nonempty text messages are supported/u)
+
+  const content: acp.ContentBlock[] = [
+    { type: "image", mimeType: "image/png", data: imageBase64 },
+    { type: "resource", resource: { uri: "deskfleet://pasted-text/log.txt", mimeType: "text/plain", text: "line 1\nline 2\n" } },
+    { type: "resource_link", uri: "file:///tmp/existing.txt", name: "existing.txt", size: 12 },
+  ]
+  await f.service.handle("_deskfleet/input/submit", {
+    sessionId: f.sessionId,
+    operationId: randomUUID(),
+    content,
+    delivery: "backlog",
+  }, f.actor)
+  const state = await until(f.read, current => current.turns.some(turn => turn.state === "completed"))
+  assert.deepEqual(state.inputs[0]!.content, content, "Journal retains the original image and inline resource blocks")
+  assert.equal(f.provider.promptBlocks.length, 1)
+  const delivered = f.provider.promptBlocks[0]!
+  assert.equal(delivered.length, 3)
+  assert.equal(delivered[0]!.type, "resource_link")
+  assert.equal(delivered[1]!.type, "resource_link")
+  assert.equal(delivered[2]!.type, "resource_link")
+  const imagePath = fileURLToPath((delivered[0] as acp.ContentBlock & { type: "resource_link" }).uri)
+  const textPath = fileURLToPath((delivered[1] as acp.ContentBlock & { type: "resource_link" }).uri)
+  assert.deepEqual(await readFile(imagePath), imageBytes)
+  assert.equal(await readFile(textPath, "utf8"), "line 1\nline 2\n")
+  const attachmentDir = await f.service.sessionAttachmentDirectory(f.sessionId)
+  assert.equal((await readdir(attachmentDir)).length, 2)
+
+  await f.service.handle("_deskfleet/session/delete", { sessionId: f.sessionId, operationId: randomUUID() }, f.actor)
+  await assert.rejects(readdir(attachmentDir), { code: "ENOENT" })
 })

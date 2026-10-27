@@ -13,12 +13,18 @@ export interface AgentConfigOption {
   options: AgentChoice[]
 }
 
+export interface AgentPromptCapabilities {
+  image?: boolean
+  embeddedContext?: boolean
+}
+
 /** Configuration reported by the installed agent for a draft or live Session. */
 export interface AgentConfiguration {
   provider: AgentChoice
   models: AgentConfigOption | null
   reasoningEfforts: AgentConfigOption | null
   modes: AgentConfigOption | null
+  promptCapabilities?: AgentPromptCapabilities
 }
 
 export interface AgentConfigurationSelection {
@@ -101,11 +107,25 @@ export function selectReasoningEffort(options: acp.SessionConfigOption[]): Agent
   return option ? toAgentOption(option) : null
 }
 
-export function agentConfiguration(options: acp.SessionConfigOption[], provider: AgentChoice = { id: "codex", name: "Codex" }): AgentConfiguration {
+export function agentPromptCapabilities(capabilities?: acp.PromptCapabilities | null): AgentPromptCapabilities | undefined {
+  if (!capabilities) return undefined
+  const result: AgentPromptCapabilities = {
+    ...(typeof capabilities.image === "boolean" ? { image: capabilities.image } : {}),
+    ...(typeof capabilities.embeddedContext === "boolean" ? { embeddedContext: capabilities.embeddedContext } : {}),
+  }
+  return Object.keys(result).length ? result : undefined
+}
+
+export function agentConfiguration(
+  options: acp.SessionConfigOption[],
+  provider: AgentChoice = { id: "codex", name: "Codex" },
+  promptCapabilities?: AgentPromptCapabilities,
+): AgentConfiguration {
   return {
     provider,
     models: selectAgentOption(options, "model", "model"),
     reasoningEfforts: selectReasoningEffort(options),
     modes: selectAgentOption(options, "mode", "mode"),
+    ...(promptCapabilities ? { promptCapabilities } : {}),
   }
 }

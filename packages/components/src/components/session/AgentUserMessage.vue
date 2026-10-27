@@ -18,7 +18,7 @@ const time = computed(() => formatMessageTime(props.input.deliveredAt ?? props.i
 // An initial prompt is already running once it is claimed; only steering waits for confirmation.
 const state = computed(() => props.input.state === "delivered" ? undefined : props.input.state === "dispatching" && props.input.actualDelivery === "turn_start" ? t("agent.inputInProgress") : t(`agent.inputState.${props.input.state}`))
 const steered = computed(() => props.input.state === "delivered" && props.input.actualDelivery === "steer")
-const text = computed(() => props.input.content.flatMap(block => block.type === "text" ? [block.text] : []).join("\n\n"))
+const text = computed(() => props.input.content.flatMap(block => block.type === "text" ? [block.text] : block.type === "resource" && "text" in block.resource ? [block.resource.text] : []).join("\n\n"))
 const copied = ref(false)
 const copyFailed = ref(false)
 const { start: scheduleCopiedReset, stop: cancelCopiedReset } = useTimeoutFn(() => { copied.value = false }, 1500, { immediate: false })

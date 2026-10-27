@@ -7,11 +7,17 @@ import { FileUploads } from "./files-uploads.ts"
 /** Machine-local file access shared by authorized peers and the local desktop host. */
 export class FilesService implements FileEndpoint {
   readonly #sessionDirectory?: (sessionId: string) => Promise<string>
-  readonly #uploads = new FileUploads()
+  readonly #uploads: FileUploads
   #running: Promise<unknown> = Promise.resolve()
   #closed = false
 
-  constructor(sessionDirectory?: (sessionId: string) => Promise<string>) { this.#sessionDirectory = sessionDirectory }
+  constructor(
+    sessionDirectory?: (sessionId: string) => Promise<string>,
+    sessionAttachmentDirectory?: (sessionId: string) => Promise<string>,
+  ) {
+    this.#sessionDirectory = sessionDirectory
+    this.#uploads = new FileUploads(sessionAttachmentDirectory)
+  }
 
   call<M extends FileMethod>(method: M, params: FileMethods[M]["params"], data?: Uint8Array): Promise<FileReply<FileMethods[M]["result"]>> {
     if (this.#closed) return Promise.reject(fileError("File connection is closed", "closed"))

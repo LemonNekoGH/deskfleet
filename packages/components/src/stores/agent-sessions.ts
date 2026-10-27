@@ -4,6 +4,7 @@ import { defineStore } from "pinia"
 import { onScopeDispose, ref } from "vue"
 import type { AgentCommand, AgentElicitation, AgentEvent, AgentInput, AgentMethod, AgentMethods, AgentPermission, AgentRun, AgentSessionContext, AgentSessionRecord, AgentSnapshot, AgentTurn } from "../../../../apps/daemon/src/agent-protocol.ts"
 import type { ElicitationDraft } from "../services/agent-elicitation.ts"
+import type { ComposerAttachment } from "../services/composer-attachments.ts"
 import { agentConfiguration as normalizeAgentConfiguration } from "../../../../apps/daemon/src/agent-configuration-protocol.ts"
 import type { AgentConfiguration } from "../../../client/src/agent-configuration.ts"
 import type { GitChangedNotification, GitDiffRequest } from "../../../../apps/daemon/src/git-protocol.ts"
@@ -45,6 +46,7 @@ export const useAgentSessionsStore = defineStore("agent-sessions", () => {
   const sessions = ref<Record<string, AgentSessionRecord>>({})
   const views = ref<Record<string, AgentSessionView>>({})
   const drafts = ref<Record<string, string>>({})
+  const draftAttachments = ref<Record<string, ComposerAttachment[]>>({})
   const elicitationDrafts = ref<Record<string, ElicitationDraft>>({})
   const draftConfiguration = useLocalStorage<AgentSelection>("deskfleet.agent-configuration", { provider: "codex" })
   const configurations = ref<Record<string, AgentConfiguration>>({})
@@ -98,8 +100,11 @@ export const useAgentSessionsStore = defineStore("agent-sessions", () => {
   function completeOperation(operationId: string): void {
     const pending = operations.value[operationId]
     if (!pending) return
-    if (pending.text !== undefined && pending.sessionId && drafts.value[pending.sessionId] === pending.text) {
-      drafts.value[pending.sessionId] = ""
+    if (pending.text !== undefined && pending.sessionId) {
+      if ((drafts.value[pending.sessionId] ?? "") === pending.text) {
+        drafts.value[pending.sessionId] = ""
+      }
+      draftAttachments.value[pending.sessionId] = []
     }
     delete operations.value[operationId]
   }
@@ -378,9 +383,13 @@ export const useAgentSessionsStore = defineStore("agent-sessions", () => {
     snapshotReceived(snapshot)
     return snapshot
   }
-  const submit = (sessionId: string, text: string, delivery: "backlog" | "steer", turnId?: string) => mutation("_deskfleet/input/submit", {
-    sessionId, content: [{ type: "text", text }], delivery, ...(turnId ? { turnId } : {}),
-  }, text)
+  const submit = (sessionId: string, content: string | AgentInput["content"], delivery: "backlog" | "steer", turnId?: string, draftText?: string) => {
+    const blocks = typeof content === "string" ? [{ type: "text" as const, text: content }] : content
+    const trackedText = draftText ?? (typeof content === "string" ? content : (drafts.value[sessionId] ?? ""))
+    return mutation("_deskfleet/input/submit", {
+      sessionId, content: blocks, delivery, ...(turnId ? { turnId } : {}),
+    }, trackedText)
+  }
   const steer = (sessionId: string, inputId: string, turnId: string) => mutation("_deskfleet/input/steer", { sessionId, inputId, turnId })
   const withdraw = (sessionId: string, inputId: string) => mutation("_deskfleet/input/withdraw", { sessionId, inputId })
   const retry = (sessionId: string, inputId: string) => mutation("_deskfleet/input/retry", { sessionId, inputId })
@@ -434,5 +443,5 @@ export const useAgentSessionsStore = defineStore("agent-sessions", () => {
     }
   }
   onScopeDispose(() => { disposed = true; gitSubscriptions.clear(); client.close() })
-  return { sessions, views, drafts, elicitationDrafts, draftConfiguration, configurations, agentConfiguration, releaseAgentConfiguration, sessionConfiguration, configureSession, state, error, operations, refresh, open, checkOperation, create, fork, submit, steer, withdraw, retry, cancel, respond, respondToElicitation, stop, archive, restore, gitStatus, gitDiff, watchGit }
+  return { sessions, views, drafts, draftAttachments, elicitationDrafts, draftConfiguration, configurations, agentConfiguration, releaseAgentConfiguration, sessionConfiguration, configureSession, state, error, operations, refresh, open, checkOperation, create, fork, submit, steer, withdraw, retry, cancel, respond, respondToElicitation, stop, archive, restore, gitStatus, gitDiff, watchGit }
 })

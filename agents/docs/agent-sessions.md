@@ -31,10 +31,11 @@ captured ordered directories are the execution context; the first supplies `cwd`
 Later Workspace edits do not retarget existing Sessions. Session creation also
 retains a failed provisioning record when Git setup fails or a directory is
 missing. Stopping a provider preserves the Session and its files. The current
-deletion path removes a worktree Session's disposable checkouts before deleting
-the catalog resource; a directory Session's files are never removed. The
-new-session composer offers both contexts when a Workspace is selected and
-remembers the last choice on that device.
+deletion path removes a worktree Session's disposable checkouts and
+`<machine directory>/session-attachments/<sessionId>/` before deleting the
+catalog resource; a directory Session's workspace or home files are never
+removed. The new-session composer offers both contexts when a Workspace is
+selected and remembers the last choice on that device.
 
 ### Forking a conversation
 
@@ -305,12 +306,24 @@ Creation atomically allocates the catalog Session, provisioning metadata, and
 command binding before filesystem work. Interrupted create retries return a full
 Session snapshot rather than allocating another Session. Deletion marks the
 Session `deleting`, stops admission, closes the provider and pending permissions,
-removes any owned checkouts, and removes Session records. Incomplete cleanup retains
+removes any owned checkouts and Session attachments, and removes Session records. Incomplete cleanup retains
 the deleting resource for an explicit retry. Source checkouts are untouched.
 
-The composer accepts text. Provider content, plans, tool patches, and unknown
-metadata remain in the journal. Attachments are not yet implemented. Credentials
-stay on the executing machine and are not stored in audit records.
+The composer accepts text alongside image (`image`), folded pasted-text (`resource`
+with inline `text`), and file (`resource_link`) attachments. Each submission must
+contain at least one non-empty `text` or text `resource` block. Local non-image
+files upload to `<machine directory>/session-attachments/<sessionId>/` through
+the file service before submission; target-machine files selected in the file
+picker reference their existing path directly as a `resource_link`. Pasted text
+of at least 25 lines or 1,500 characters folds into a `resource` attachment chip
+in the composer and renders as a collapsible card in conversation history. When
+dispatching a prompt or steer to a provider that does not advertise
+`promptCapabilities.image` or `promptCapabilities.embeddedContext`, the daemon
+materializes unsupported inline `image` or text `resource` blocks into
+`<machine directory>/session-attachments/<sessionId>/` and passes `resource_link`
+blocks to the provider while keeping the original blocks in the journal.
+Provider content, plans, tool patches, and unknown metadata remain in the journal.
+Credentials stay on the executing machine and are not stored in audit records.
 
 ## Backlog, steering, and cancellation
 
@@ -498,7 +511,7 @@ conversation API. Remote authenticated signaling can reuse this facade.
 | `_deskfleet/session/history` | Page events after a sequence; up to 200 events per request |
 | `_deskfleet/git/status` | Inspect the Session's captured checkouts, branch/HEAD, and staged/unstaged/untracked files |
 | `_deskfleet/git/diff` | Read one changed file's patch by Session, repository, relative path, and change kind |
-| `_deskfleet/input/submit` | Persist text with operation ID and backlog/steer intent |
+| `_deskfleet/input/submit` | Persist prompt content (`text`, `image`, inline text `resource`, and `resource_link` blocks, with at least one non-empty text or text-resource block) with operation ID and backlog/steer intent |
 | `_deskfleet/input/steer` | Claim a candidate and steer toward the observed turn |
 | `_deskfleet/input/retry` | Make a confirmed failed input pending again |
 | `_deskfleet/input/withdraw` | Withdraw a pending or confirmed failed input |
@@ -723,7 +736,7 @@ restart without using paid inference. File changes made outside the provider
 also update an open diff when their status letters and line counts stay equal.
 
 Remote account enrollment, scoped peer authorization, HTTPS cached history,
-central synchronization, and attachments are subsequent work. Synchronization
+and central synchronization are subsequent work. Synchronization
 will use qualified Session IDs and event watermarks; the executing daemon
 remains the single journal writer.
 

@@ -1,17 +1,24 @@
 <script setup lang="ts">
+import { client } from "@deskfleet/client/platform"
 import UiButton from "../common/UiButton.vue"
-import { ArrowUp, Check, ChevronDown, CornerDownRight, Folder, FolderOpen, GitBranch, Monitor, Square } from "@lucide/vue"
-import { useTextareaAutosize } from "@vueuse/core"
-import { DropdownMenuContent, DropdownMenuPortal, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuRoot, DropdownMenuTrigger } from "reka-ui"
+import FilePickerDialog from "../common/FilePickerDialog.vue"
+import { ArrowUp, Check, ChevronDown, CornerDownRight, File, FileText, Folder, FolderOpen, GitBranch, HardDrive, Monitor, Plus, Square, Upload, X } from "@lucide/vue"
+import { useDropZone, useTextareaAutosize } from "@vueuse/core"
+import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuRoot, DropdownMenuTrigger } from "reka-ui"
 import { computed, ref, useTemplateRef } from "vue"
 import { useI18n } from "vue-i18n"
 import { RouterLink } from "vue-router"
 import type { AgentSessionContext } from "../../../../../apps/daemon/src/agent-protocol.ts"
+import type { FileEntry } from "../../../../client/src/files.ts"
+import { useFileTarget } from "../../composables/useFileTarget.ts"
+import { attachmentsFromFiles, createMachineFileAttachment, createPastedTextAttachment, hasSubmittableText, shouldFoldPastedText, type ComposerAttachment } from "../../services/composer-attachments.ts"
+import { fileSize } from "../../services/file-format.ts"
 import type { SessionTarget } from "../../stores/fleet.ts"
 import AgentConfigurationSelector from "./AgentConfigurationSelector.vue"
 import AgentUsage from "./AgentUsage.vue"
 import type { AgentUsage as AgentUsageUpdate } from "../../services/agent-usage.ts"
 const configurationLoading = ref(false)
+const filePickerOpen = ref(false)
 const props = defineProps<{
   location: SessionTarget | null
   showTarget?: boolean
@@ -24,13 +31,19 @@ const props = defineProps<{
   canCancel?: boolean
 }>()
 const draft = defineModel<string>({ default: "" })
+const attachments = defineModel<ComposerAttachment[]>("attachments", { default: () => [] })
 /** The execution context a new Session will use; only offered with `showTarget`. */
 const context = defineModel<AgentSessionContext>("context", { default: "worktree" })
 const emit = defineEmits<{ submit: [delivery: "backlog" | "steer"]; cancel: [] }>()
 const { t } = useI18n()
 const textarea = useTemplateRef<HTMLTextAreaElement>("textarea")
+const fileInput = useTemplateRef<HTMLInputElement>("fileInput")
+const dropZoneRef = useTemplateRef<HTMLElement>("dropZoneRef")
 useTextareaAutosize({ element: textarea, input: draft })
-const empty = computed(() => !draft.value.trim())
+const fileTarget = useFileTarget(() => props.location?.machine.id)
+const filesApi = computed(() => client.files)
+const initialPickerPath = computed(() => props.location?.worktree?.directories[0]?.path ?? props.location?.workspace?.directories[0]?.path)
+const empty = computed(() => !hasSubmittableText(draft.value, attachments.value))
 const placeholder = computed(() => t(props.activeTurn ? "agent.backlogHint" : "composer.placeholder"))
 const checkout = computed(() => props.location?.worktree?.directories.find(directory => directory.git)?.git ?? undefined)
 const changes = computed(() => (checkout.value?.changes ?? []).reduce((total, change) => ({ additions: total.additions + change.additions, deletions: total.deletions + change.deletions }), { additions: 0, deletions: 0 }))
@@ -39,6 +52,46 @@ const contexts = [
   { id: "directory", icon: FolderOpen },
 ] as const satisfies readonly { id: AgentSessionContext; icon: unknown }[]
 const selected = computed(() => contexts.find(option => option.id === context.value) ?? contexts[0])
+const { isOverDropZone } = useDropZone(dropZoneRef, {
+  onDrop(files) {
+    if (files?.length && !props.disabled && !props.submitting) void addFiles(files)
+  },
+})
+async function addFiles(files: Iterable<File>): Promise<void> {
+  const added = await attachmentsFromFiles(files)
+  if (added.length) attachments.value = [...attachments.value, ...added]
+}
+async function onFilesPicked(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  if (input.files?.length) await addFiles(Array.from(input.files))
+  input.value = ""
+}
+function onMachineFilesSelected(entries: FileEntry[]): void {
+  filePickerOpen.value = false
+  if (!entries.length) return
+  const added = entries.map(entry => createMachineFileAttachment(entry))
+  attachments.value = [...attachments.value, ...added]
+}
+function removeAttachment(id: string): void {
+  attachments.value = attachments.value.filter(item => item.id !== id)
+}
+function attachmentLabel(item: ComposerAttachment): string {
+  return item.kind === "pasted_text" ? t("composer.pastedText") : item.name
+}
+function onPaste(event: ClipboardEvent): void {
+  if (props.disabled || props.submitting) return
+  const files = event.clipboardData?.files
+  if (files && files.length > 0) {
+    event.preventDefault()
+    void addFiles(Array.from(files))
+    return
+  }
+  const text = event.clipboardData?.getData("text/plain")
+  if (text && shouldFoldPastedText(text)) {
+    event.preventDefault()
+    attachments.value = [...attachments.value, createPastedTextAttachment(text)]
+  }
+}
 function submit(delivery: "backlog" | "steer"): void {
   if (props.disabled || props.submitting || configurationLoading.value || !props.location || empty.value) return
   emit("submit", delivery)
@@ -85,10 +138,41 @@ function keydown(event: KeyboardEvent): void {
       </template>
       <span v-if="changes.additions || changes.deletions" class="ml-auto shrink-0 rounded-md bg-ui-badge px-1.5 font-mono text-xs leading-5"><span class="text-ui-success">+{{ changes.additions }}</span> <span class="text-ui-danger">−{{ changes.deletions }}</span></span>
     </div>
-    <div class="relative rounded-2xl border border-ui-border bg-ui-surface shadow-ui-card transition-colors focus-within:border-ui-accent/60">
+    <div ref="dropZoneRef" class="relative rounded-2xl border bg-ui-surface shadow-ui-card transition-colors focus-within:border-ui-accent/60" :class="isOverDropZone ? 'border-ui-accent bg-ui-accent/5' : 'border-ui-border'">
       <span v-if="showTarget && submitting" class="composer-creation-beam" aria-hidden="true" />
-      <textarea ref="textarea" v-model="draft" rows="2" class="block max-h-60 min-h-14 w-full resize-none bg-transparent px-4 pt-3 text-[15px] leading-6 outline-none select-text placeholder:text-ui-text-faint" :aria-label="t('composer.label')" :placeholder="placeholder" @keydown="keydown" />
+      <input ref="fileInput" type="file" multiple class="sr-only" data-composer-file-input @change="onFilesPicked" />
+      <ul v-if="attachments.length" class="m-0 flex list-none flex-wrap gap-2 px-3 pt-3 pb-0" :aria-label="t('composer.attachments')" data-composer-attachments>
+        <li v-for="item in attachments" :key="item.id" class="inline-flex max-w-full items-center gap-2 rounded-lg border border-ui-border bg-ui-canvas px-2.5 py-1.5 text-xs" :data-attachment-kind="item.kind">
+          <img v-if="item.kind === 'image'" :src="`data:${item.mimeType};base64,${item.data}`" :alt="item.name" class="h-6 w-6 shrink-0 rounded object-cover" />
+          <FileText v-else-if="item.kind === 'pasted_text'" :size="14" class="shrink-0 text-ui-text-muted" aria-hidden="true" />
+          <File v-else :size="14" class="shrink-0 text-ui-text-muted" aria-hidden="true" />
+          <span class="min-w-0 truncate font-medium text-ui-text" :title="item.kind === 'machine_file' ? item.path : attachmentLabel(item)">{{ attachmentLabel(item) }}</span>
+          <span v-if="item.kind === 'pasted_text'" class="shrink-0 rounded bg-ui-badge px-1.5 py-0.5 text-[11px] text-ui-text-muted">{{ t("composer.pastedTextLines", item.lines) }}</span>
+          <span v-else-if="item.size !== undefined" class="shrink-0 text-[11px] tabular-nums text-ui-text-muted">{{ fileSize(item.size) }}</span>
+          <button type="button" class="inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded text-ui-text-muted hover:bg-ui-hover hover:text-ui-text" :aria-label="t('composer.removeAttachment', { name: attachmentLabel(item) })" :disabled="disabled || submitting" @click="removeAttachment(item.id)">
+            <X :size="12" aria-hidden="true" />
+          </button>
+        </li>
+      </ul>
+      <textarea ref="textarea" v-model="draft" rows="2" class="block max-h-60 min-h-14 w-full resize-none bg-transparent px-4 pt-3 text-[15px] leading-6 outline-none select-text placeholder:text-ui-text-faint" :aria-label="t('composer.label')" :placeholder="placeholder" @keydown="keydown" @paste="onPaste" />
       <div class="flex items-center gap-2 px-3 pb-2.5">
+        <DropdownMenuRoot v-if="location" :modal="false">
+          <DropdownMenuTrigger class="ui-button-ghost h-7 w-7 shrink-0 rounded-lg p-0 text-ui-text-muted hover:bg-ui-hover hover:text-ui-text" :aria-label="t('composer.attach')" :title="t('composer.attach')" :disabled="disabled || submitting" data-composer-attach>
+            <Plus :size="16" :stroke-width="2" aria-hidden="true" />
+          </DropdownMenuTrigger>
+          <DropdownMenuPortal>
+            <DropdownMenuContent side="top" align="start" :side-offset="4" :collision-padding="8" :aria-label="t('composer.attach')" class="ui-menu z-50 flex min-w-52 flex-col" loop>
+              <DropdownMenuItem as="button" type="button" class="ui-menu-item" data-attach-local @select="fileInput?.click()">
+                <Upload :size="15" :stroke-width="1.75" class="shrink-0 text-ui-text-muted" aria-hidden="true" />
+                <span class="truncate text-[13px] text-ui-text">{{ t("composer.uploadLocalFiles") }}</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem as="button" type="button" class="ui-menu-item" :disabled="!fileTarget || !filesApi" data-attach-machine @select="filePickerOpen = true">
+                <HardDrive :size="15" :stroke-width="1.75" class="shrink-0 text-ui-text-muted" aria-hidden="true" />
+                <span class="truncate text-[13px] text-ui-text">{{ t("composer.chooseMachineFiles") }}</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenuPortal>
+        </DropdownMenuRoot>
         <AgentConfigurationSelector v-if="location" :workspace-id="location.workspace?.id" :session-id="location.session?.id" :disabled="disabled || submitting || activeTurn" @loading="configurationLoading = $event" />
         <div class="ml-auto flex shrink-0 items-center gap-2">
           <AgentUsage v-if="usage" :key="location?.session?.id" :usage="usage" />
@@ -98,6 +182,15 @@ function keydown(event: KeyboardEvent): void {
         </div>
       </div>
     </div>
+    <FilePickerDialog
+      v-if="filePickerOpen && location && fileTarget && filesApi"
+      :api="filesApi"
+      :target="fileTarget"
+      :initial-path="initialPickerPath"
+      :machine-name="location.machine.name"
+      @select="onMachineFilesSelected"
+      @cancel="filePickerOpen = false"
+    />
   </div>
 </template>
 

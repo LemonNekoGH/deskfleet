@@ -1,6 +1,6 @@
 import type * as acp from "@agentclientprotocol/sdk/unstable"
 import { applyAgentConfiguration } from "./agent-configuration.ts"
-import { agentConfiguration, type AgentConfiguration, type AgentConfigurationParams } from "./agent-configuration-protocol.ts"
+import { agentConfiguration, agentPromptCapabilities, type AgentConfiguration, type AgentConfigurationParams } from "./agent-configuration-protocol.ts"
 import type { AgentConfig, AgentConnection, AgentProvider } from "./agents/acp.ts"
 
 interface Launch { provider: AgentProvider; config: AgentConfig }
@@ -159,7 +159,11 @@ export class AgentConfigurationProbes {
       probe.options = await applyAgentConfiguration(probe.connection, probe.sessionId!, probe.options, params,
         options => { probe.options = options })
       signal.throwIfAborted()
-      return agentConfiguration(probe.options, { id: params.provider, name: launch.config.name })
+      return agentConfiguration(
+        probe.options,
+        { id: params.provider, name: launch.config.name },
+        agentPromptCapabilities(probe.connection.initialization.agentCapabilities?.promptCapabilities),
+      )
     })()
     try {
       return await Promise.race([discovery, cancelled])

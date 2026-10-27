@@ -19,7 +19,7 @@ export interface FileMethods {
   stat: { params: { path: string }; result: FileEntry }
   resolve: { params: { sessionId: string; uri: string }; result: FileEntry }
   read: { params: { path: string; offset: number; length: number; modifiedAt?: number }; result: { bytes: number } }
-  begin: { params: { directory: string; name: string; kind: FileKind; conflict: FileConflict }; result: { transferId: string; skipped: boolean } }
+  begin: { params: { directory?: string; sessionId?: string; name: string; kind: FileKind; conflict: FileConflict }; result: { transferId: string; skipped: boolean } }
   mkdir: { params: { transferId: string; path: string }; result: null }
   write: { params: { transferId: string; path: string; offset: number }; result: { bytes: number } }
   finish: { params: { transferId: string; path: string; size: number }; result: null }

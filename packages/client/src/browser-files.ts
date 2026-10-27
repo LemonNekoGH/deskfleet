@@ -173,6 +173,7 @@ export class BrowserFilesEndpoint implements FileEndpoint {
       }
       case "begin": {
         const request = params as FileMethods["begin"]["params"]
+        if (!request.directory) throw new Error("Session attachments belong to the executing machine")
         if (segments(request.name).length !== 1) throw new Error("Invalid file name")
         const directory = await this.#directory(request.directory)
         let name = request.name
@@ -304,6 +305,7 @@ export function createBrowserFiles(central: CentralApi): FilesApi & { close(): P
     resolveResource: request => manager.resolveResource(request),
     readResource: request => manager.readResource(request),
     saveResource: request => manager.saveResource(request),
+    uploadAttachment: request => manager.uploadAttachment(request),
     onChanged: listener => { listeners.add(listener); return () => { listeners.delete(listener) } },
     close,
   }

@@ -1,5 +1,5 @@
 import { FILE_CHUNK_BYTES, type FileEndpoint, type FileEntry } from "../../../apps/daemon/src/files-protocol.ts"
-import type { FileConflict, FileListing, FileResourceRequest, FilesApi, FileTarget, FileTransfer, FileTransferRequest } from "./files.ts"
+import { filePathToUri, type FileAttachmentUploadRequest, type FileAttachmentUploadResult, type FileConflict, type FileListing, type FileResourceRequest, type FilesApi, type FileTarget, type FileTransfer, type FileTransferRequest } from "./files.ts"
 import { copyFileChunks } from "./file-pipeline.ts"
 
 const PREVIEW_BYTES = 16 * 1024 * 1024
@@ -230,6 +230,30 @@ export class FileTransferManager implements FilesApi {
     const file = await this.resolveResource(request)
     const target: FileTarget = { kind: "local", ...(directory.grantId ? { grantId: directory.grantId } : {}) }
     return this.enqueue({ source: { target: request.target, path: file.path }, destination: { target, path: directory.path }, kind: file.kind })
+  }
+  async uploadAttachment(request: FileAttachmentUploadRequest): Promise<FileAttachmentUploadResult> {
+    const endpoint = await this.#endpoint(request.target)
+    const started = (await endpoint.call("begin", {
+      sessionId: request.sessionId,
+      name: request.name,
+      kind: "file",
+      conflict: "rename",
+    })).value
+    const transferId = started.transferId
+    if (!transferId) throw new Error("Receiver did not open the attachment transfer")
+    try {
+      for (let offset = 0; offset < request.data.byteLength; offset += FILE_CHUNK_BYTES) {
+        const chunk = request.data.subarray(offset, Math.min(request.data.byteLength, offset + FILE_CHUNK_BYTES))
+        await endpoint.call("write", { transferId, path: "", offset }, chunk)
+      }
+      await endpoint.call("finish", { transferId, path: "", size: request.data.byteLength })
+      const committed = (await endpoint.call("commit", { transferId })).value
+      const name = committed.path.split(/[\\/]/u).filter(Boolean).at(-1) ?? request.name
+      return { path: committed.path, uri: filePathToUri(committed.path), name, size: request.data.byteLength }
+    } catch (error) {
+      await endpoint.call("abort", { transferId }).catch(() => {})
+      throw error
+    }
   }
 
   async close(): Promise<void> {

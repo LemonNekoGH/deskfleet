@@ -11,6 +11,24 @@ export interface FileTransfer {
   transferredBytes: number; totalBytes: number | null; bytesPerSecond: number; error?: string
 }
 export interface FileResourceRequest { target: FileTarget; sessionId: string; uri: string }
+export interface FileAttachmentUploadRequest { target: FileTarget; sessionId: string; name: string; data: Uint8Array }
+export interface FileAttachmentUploadResult { path: string; uri: string; name: string; size: number }
+
+export function filePathToUri(path: string): string {
+  const normalized = path.replaceAll("\\", "/")
+  if (/^[a-z]:\//iu.test(normalized)) {
+    const drive = normalized.slice(0, 2)
+    const rest = normalized.slice(3).split("/").map(encodeURIComponent).join("/")
+    return `file:///${drive}/${rest}`
+  }
+  if (normalized.startsWith("//")) {
+    const parts = normalized.slice(2).split("/").map(encodeURIComponent).join("/")
+    return `file://${parts}`
+  }
+  const clean = normalized.startsWith("/") ? normalized.slice(1) : normalized
+  return `file:///${clean.split("/").map(encodeURIComponent).join("/")}`
+}
+
 export interface FilesApi {
   list(target: FileTarget, path?: string): Promise<FileListing>
   /** A browser grants access to a local directory; desktop opens a native directory chooser. */
@@ -24,6 +42,7 @@ export interface FilesApi {
   /** Bounded image/text preview; larger files use saveResource and the streaming transfer queue. */
   readResource(request: FileResourceRequest): Promise<{ data: Uint8Array; name: string; mimeType: string }>
   saveResource(request: FileResourceRequest): Promise<string | null>
+  uploadAttachment?(request: FileAttachmentUploadRequest): Promise<FileAttachmentUploadResult>
 }
 export const FILES_IPC_CHANNEL = "deskfleet:files"
 export const FILES_CHANGED_EVENT = "deskfleet:files-changed"
