@@ -860,5 +860,17 @@
         "skip": "Remote mouse and keyboard control will be unavailable until you enable this permission in System Settings."
       }
     }
+  },
+  "mermaid": {
+    "title": "Mermaid diagram",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out",
+    "resetView": "Reset zoom and position",
+    "locateMessage": "Locate original message",
+    "focus": "Focus",
+    "more": "More",
+    "showInSidebar": "Show in sidebar",
+    "showInNewWindow": "Show in new window",
+    "closeTab": "Close {title}"
   }
 }

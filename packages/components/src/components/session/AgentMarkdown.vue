@@ -4,9 +4,11 @@ import { watchImmediate } from "@vueuse/core"
 import { computed, inject, nextTick, onBeforeUnmount, ref, useTemplateRef } from "vue"
 import { useI18n } from "vue-i18n"
 import { agentResourceContextKey } from "../../services/agent-resources.ts"
-import { renderResourceMarkdown } from "../../services/markdown.ts"
+import { renderResourceMarkdown, type MarkdownDiagram } from "../../services/markdown.ts"
+import MermaidViewer from "./MermaidViewer.vue"
+
 const props = defineProps<{ text: string }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const context = inject(agentResourceContextKey, computed(() => undefined))
 const rendered = computed(() => renderResourceMarkdown(props.text))
 const surface = useTemplateRef<HTMLDivElement>("surface")
@@ -14,10 +16,22 @@ const error = ref<string>()
 const saving = ref(false)
 const files = client.files
 interface LoadedImage { url?: string; error?: string }
+interface MarkdownSegment { key: string; html?: string; diagram?: MarkdownDiagram }
 const images = new Map<string, LoadedImage>()
 let contextKey = ""
 let generation = 0
 let disposed = false
+
+const segments = computed<MarkdownSegment[]>(() => {
+  const { html, diagrams } = rendered.value
+  if (!diagrams.length) return [{ key: "html-0", html }]
+  const byId = new Map(diagrams.map(diagram => [diagram.id, diagram]))
+  return html.split(/(<div class="ui-mermaid" data-mermaid="\d+"><pre><code>[\s\S]*?<\/code><\/pre><\/div>\n?)/gu).flatMap<MarkdownSegment>((part, i) => {
+    const match = /^<div class="ui-mermaid" data-mermaid="(\d+)">/u.exec(part)
+    const diagram = match && byId.get(match[1]!)
+    return diagram ? [{ key: `mermaid-${diagram.id}`, diagram }] : part ? [{ key: `html-${i}`, html: part }] : []
+  })
+})
 
 function release(uri: string): void {
   const image = images.get(uri)
@@ -38,7 +52,7 @@ function hydrate(): void {
       retry.type = "button"; retry.className = "ui-button"
       retry.dataset.resourceRetry = resource.uri
       retry.textContent = resource.alt || t("files.imageUnavailable")
-      retry.title = `${image.error} — ${t("files.retry")}`
+      retry.title = `${image.error} \u2014 ${t("files.retry")}`
       holder.replaceChildren(retry)
     } else {
       const loading = document.createElement("span")
@@ -46,6 +60,11 @@ function hydrate(): void {
       loading.textContent = t("files.loadingResource")
       holder.replaceChildren(loading)
     }
+  }
+  for (const button of surface.value?.querySelectorAll<HTMLButtonElement>("[data-math-copy]") ?? []) {
+    const label = t(button.dataset.copied === "true" ? "common.copied" : "common.copy")
+    button.setAttribute("aria-label", label)
+    button.title = label
   }
 }
 function load(uri: string): void {
@@ -62,7 +81,7 @@ function load(uri: string): void {
     if (images.get(uri) === value) value.error = reason instanceof Error ? reason.message : String(reason)
   }).finally(() => { if (!disposed && images.get(uri) === value) hydrate() })
 }
-watchImmediate([rendered, context], async () => {
+watchImmediate([rendered, context, locale], async () => {
   const version = ++generation
   const key = JSON.stringify(context.value)
   if (contextKey !== key) {
@@ -78,6 +97,19 @@ watchImmediate([rendered, context], async () => {
 
 async function click(event: MouseEvent): Promise<void> {
   const target = event.target instanceof Element ? event.target : null
+  const mathCopy = target?.closest<HTMLButtonElement>("[data-math-copy]")
+  if (mathCopy) {
+    event.preventDefault()
+    try { await navigator.clipboard.writeText(mathCopy.dataset.mathCopy ?? "") } catch { return }
+    const setCopied = (copied: boolean) => {
+      if (copied) mathCopy.dataset.copied = "true"; else delete mathCopy.dataset.copied
+      const label = t(copied ? "common.copied" : "common.copy")
+      mathCopy.setAttribute("aria-label", label); mathCopy.title = label
+    }
+    setCopied(true)
+    setTimeout(() => { if (!disposed) setCopied(false) }, 1500)
+    return
+  }
   const retry = target?.closest<HTMLButtonElement>("[data-resource-retry]")
   if (retry?.dataset.resourceRetry) {
     event.preventDefault()
@@ -95,12 +127,22 @@ async function click(event: MouseEvent): Promise<void> {
   catch (reason) { if (!disposed && version === generation) error.value = reason instanceof Error ? reason.message : String(reason) }
   finally { if (!disposed) saving.value = false }
 }
-onBeforeUnmount(() => { disposed = true; ++generation; for (const uri of images.keys()) release(uri) })
+onBeforeUnmount(() => {
+  disposed = true
+  ++generation
+  for (const uri of images.keys()) release(uri)
+})
 </script>
 
 <template>
   <div>
-    <div ref="surface" class="ui-markdown" :aria-busy="saving" @click="click" v-html="rendered.html" />
+    <div v-if="!rendered.diagrams.length" ref="surface" class="ui-markdown" :aria-busy="saving" @click="click" v-html="rendered.html" />
+    <div v-else ref="surface" class="ui-markdown" :aria-busy="saving" @click="click">
+      <template v-for="segment in segments" :key="segment.key">
+        <MermaidViewer v-if="segment.diagram" :data-mermaid="segment.diagram.id" :code="segment.diagram.code" mode="inline" />
+        <div v-else-if="segment.html" class="ui-markdown-segment" v-html="segment.html" />
+      </template>
+    </div>
     <p v-if="error" class="mt-2 text-xs text-ui-danger" role="alert">{{ error }}</p>
   </div>
 </template>

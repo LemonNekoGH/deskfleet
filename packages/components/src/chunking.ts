@@ -16,8 +16,13 @@ export const clientCodeSplitting = {
       priority: 30,
     },
     {
+      name: "mermaid",
+      test: /[\\/]node_modules[\\/]mermaid[\\/]/,
+      priority: 30,
+    },
+    {
       name: "markdown",
-      test: /[\\/]node_modules[\\/]markdown-it[\\/]/,
+      test: /[\\/]node_modules[\\/](?:markdown-it|katex)[\\/]/,
       priority: 30,
     },
     {

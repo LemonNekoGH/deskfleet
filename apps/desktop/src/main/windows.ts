@@ -4,7 +4,7 @@ import { LOCALE_ARGUMENT_PREFIX } from "../../../../packages/client/src/i18n.ts"
 import { resolveRendererEntrypoint } from "../shared/renderer-security.ts"
 import { attachDesktopMedia } from "./desktop-media.ts"
 import { attachSettings } from "./settings.ts"
-import { attachExternalLinks } from "./external-links.ts"
+import { attachExternalLinks, isAuxiliaryRendererUrl } from "./external-links.ts"
 import { getMainLocale } from "./i18n.ts"
 import type { BackgroundLifecycle } from "./lifecycle.ts"
 import { buildResourcePath } from "./paths.ts"
@@ -65,9 +65,23 @@ export async function showMainWindow(lifecycle: BackgroundLifecycle): Promise<vo
   // Windows ends the session through window messages rather than a quit request.
   window.on("session-end", () => lifecycle.quit())
 
-  // The renderer is a single hash-routed document; it never opens or navigates
-  // to other pages itself.
-  attachExternalLinks(window.webContents)
+  // The renderer is a single hash-routed document; auxiliary windows open only for standalone Mermaid views.
+  attachExternalLinks(window.webContents, () => ({
+    width: 960,
+    height: 680,
+    minWidth: 480,
+    minHeight: 360,
+    ...(process.platform === "darwin" ? {} : { icon: buildResourcePath("icon.png") }),
+    ...windowChromeOptions(process.platform),
+    webPreferences: secureWebPreferences(),
+  }))
+  window.webContents.on("did-create-window", (child) => {
+    followSystemTheme(child, process.platform)
+    attachExternalLinks(child.webContents)
+    child.webContents.on("will-navigate", (event, url) => {
+      if (!isAuxiliaryRendererUrl(url)) event.preventDefault()
+    })
+  })
   window.webContents.on("will-navigate", (event) => event.preventDefault())
   window.webContents.on("render-process-gone", (_event, details) => {
     console.error("deskfleet renderer process exited", details)

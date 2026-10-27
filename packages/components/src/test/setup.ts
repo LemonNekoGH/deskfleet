@@ -3,6 +3,10 @@ import { afterEach } from "vitest"
 import type { DeskfleetDesktopApi } from "../../../client/src/desktop-api.ts"
 import { loadProviderIcons } from "../services/provider-icons.ts"
 
+if (document.compatMode !== "CSS1Compat") {
+  Object.defineProperty(document, "compatMode", { value: "CSS1Compat", configurable: true })
+}
+
 const api: DeskfleetDesktopApi = {
   platform: "linux",
   locale: "en-US",

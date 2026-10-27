@@ -6,6 +6,21 @@ import "./styles.css"
 
 export async function mountDeskfleet(target: string | Element = "#root") {
   document.documentElement.lang = platformClient.locale
+  if (window.location.hash.startsWith("#/mermaid")) {
+    const params = new URLSearchParams(window.location.hash.split("?")[1])
+    const root = (await import("./components/session/MermaidViewer.vue")).default
+    const app = createApp(root, {
+      code: params.get("code") ?? "",
+      mode: "window",
+      source: {
+        sessionId: params.get("sessionId") || undefined,
+        entryId: params.get("entryId") || undefined,
+        diagramId: params.get("diagramId") || undefined,
+      },
+    })
+    app.use(vaporInteropPlugin).use(createPinia()).use((await import("./router/index.ts")).router).use(i18n).mount(target)
+    return app
+  }
   const host = getClient()
   // Account sign-in and the local workspace are separate graphs.
   const root = host.central

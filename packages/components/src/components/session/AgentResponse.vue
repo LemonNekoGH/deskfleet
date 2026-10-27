@@ -4,9 +4,10 @@ import { useIntervalFn, useNow, watchImmediate } from "@vueuse/core"
 import { computed, reactive, ref, watch } from "vue"
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from "reka-ui"
 import { useI18n } from "vue-i18n"
-import type { ConversationResponse } from "../../services/agent-conversation.ts"
+import type { ConversationResponse, ConversationStep } from "../../services/agent-conversation.ts"
 import { summarizeTools } from "../../services/agent-conversation.ts"
 import { elapsed, formatDuration } from "../../services/agent-format.ts"
+import { pendingMermaidLocate, type MermaidLocateRequest } from "../../stores/layout.ts"
 import AgentContent from "./AgentContent.vue"
 import AgentPlan from "./AgentPlan.vue"
 import AgentToolCall from "./AgentToolCall.vue"
@@ -32,6 +33,23 @@ const summary = computed(() => props.response.live ? [] : summarizeTools(props.r
 const outcome = computed(() => props.response.last && props.response.turn && ["cancelled", "interrupted", "failed"].includes(props.response.turn.state) ? props.response.turn : undefined)
 const thoughts = reactive(new Set<string>())
 const toggleThought = (id: string) => thoughts.has(id) ? thoughts.delete(id) : thoughts.add(id)
+
+function stepMatchesLocate(step: ConversationStep, target: MermaidLocateRequest): boolean {
+  if (target.entryId) return step.id === target.entryId
+  if (step.kind === "message") {
+    return step.content.some(block => block.type === "text" && block.text.includes(target.code))
+  }
+  return false
+}
+
+watchImmediate([pendingMermaidLocate, steps], ([target, currentSteps]) => {
+  if (!target) return
+  for (const step of currentSteps) {
+    if (!stepMatchesLocate(step, target)) continue
+    toggled.value = true
+    if (step.kind === "message" && step.role === "thought") thoughts.add(step.id)
+  }
+})
 </script>
 
 <template>
@@ -62,7 +80,7 @@ const toggleThought = (id: string) => thoughts.has(id) ? thoughts.delete(id) : t
       </div>
     </CollapsibleContent>
     <AgentContent v-if="answer" :content="answer.content" markdown :data-conversation-entry="answer.id" />
-    <p v-if="summary.length" class="m-0 text-ui-text-muted">{{ summary.join(' · ') }}</p>
+    <p v-if="summary.length" class="m-0 text-ui-text-muted">{{ summary.join(' \u00b7 ') }}</p>
     <div v-if="outcome" class="flex items-start gap-1.5 text-sm" :class="outcome.state === 'failed' ? 'text-ui-danger' : 'text-ui-text-muted'">
       <CircleX v-if="outcome.state === 'failed'" :size="15" :stroke-width="2" class="mt-0.5 shrink-0" aria-hidden="true" />
       <CircleAlert v-else :size="15" :stroke-width="2" class="mt-0.5 shrink-0" aria-hidden="true" />

@@ -4,18 +4,37 @@ import { computed, ref } from "vue"
 import { afterEach, expect, test, vi } from "vitest"
 import type { FilesApi } from "../../../../client/src/files.ts"
 import { i18n } from "../../i18n/index.ts"
+import { router } from "../../router/index.ts"
 import { agentResourceContextKey, type AgentResourceContext } from "../../services/agent-resources.ts"
+import * as mermaidService from "../../services/mermaid.ts"
+import { mermaidSidebarTabs, resetMermaidSidebarTabs } from "../../stores/layout.ts"
 import AgentMarkdown from "./AgentMarkdown.vue"
+import MermaidViewer from "./MermaidViewer.vue"
 
 const originalFiles = client.files
 let wrapper: VueWrapper | undefined
 const context = () => ref<AgentResourceContext>({ target: { kind: "machine", machineId: "42", teamId: "7" }, sessionId: "12" })
 function render(files: Partial<FilesApi>, text: string, value = context()) {
   client.files = files as FilesApi
-  wrapper = mount(AgentMarkdown, { props: { text }, global: { plugins: [i18n], provide: { [agentResourceContextKey as symbol]: computed(() => value.value) } } })
+  wrapper = mount(AgentMarkdown, {
+    attachTo: document.body,
+    props: { text },
+    global: {
+      plugins: [i18n, router],
+      stubs: { Teleport: { inheritAttrs: false, template: "<slot />" } },
+      provide: { [agentResourceContextKey as symbol]: computed(() => value.value) },
+    },
+  })
   return wrapper
 }
-afterEach(() => { wrapper?.unmount(); wrapper = undefined; client.files = originalFiles })
+afterEach(() => {
+  wrapper?.unmount()
+  wrapper = undefined
+  client.files = originalFiles
+  resetMermaidSidebarTabs()
+  vi.restoreAllMocks()
+  vi.useRealTimers()
+})
 
 test("loads images from the executing machine, shares reads through streamed text and releases URLs", async () => {
   let resolve!: (value: { data: Uint8Array; name: string; mimeType: string }) => void
@@ -74,4 +93,71 @@ test("late image completion after unmount creates no retained URL", async () => 
   resolve({ data: new Uint8Array([1]), name: "chart.png", mimeType: "image/png" })
   await flushPromises()
   expect(create).not.toHaveBeenCalled()
+})
+
+test("renders mermaid diagrams, toolbar controls, and LaTeX copy button", async () => {
+  await router.push("/sessions/12")
+  vi.spyOn(mermaidService, "renderMermaidDiagram")
+    .mockResolvedValueOnce('<svg data-test-mermaid="ok"><g></g></svg>')
+    .mockRejectedValueOnce(new Error("Parse error"))
+    .mockResolvedValue('<svg data-test-mermaid="ok"><g></g></svg>')
+  const openSpy = vi.spyOn(window, "open").mockReturnValue(null)
+  const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue()
+  const view = render({}, "```mermaid\ngraph TD\n  A --> B\n```\n\n```mermaid\ninvalid diagram\n```\n\n$$\n\\int_0^1 x^2 \\, dx = \\frac{1}{3}\n$$")
+  await flushPromises()
+
+  expect(view.find('[data-mermaid="0"] svg[data-test-mermaid="ok"]').exists()).toBe(true)
+  expect(view.get('[data-mermaid="1"] pre code').text()).toBe("invalid diagram")
+  expect(view.find('[data-mermaid-action="locate-message"]').exists()).toBe(false)
+
+  const stage = view.get('[data-mermaid="0"] [data-mermaid-stage]')
+  await view.get('[data-mermaid-action="zoom-in"]').trigger("click")
+  expect(stage.attributes("style")).toContain("scale(1.25)")
+  await view.get('[data-mermaid-action="zoom-out"]').trigger("click")
+  await view.get('[data-mermaid-action="zoom-out"]').trigger("click")
+  expect(stage.attributes("style")).toContain("scale(0.75)")
+  await view.get('[data-mermaid-action="reset"]').trigger("click")
+  expect(stage.attributes("style")).toContain("translate(0px, 0px) scale(1)")
+
+  await view.get('[data-mermaid-action="focus"]').trigger("click")
+  await flushPromises()
+  expect(router.currentRoute.value.query.mermaid).toBe("graph TD\n  A --> B")
+
+  await view.get('[data-mermaid-action="more"]').trigger("click")
+  await flushPromises()
+  await view.get('[data-mermaid-action="copy"]').trigger("click")
+  await flushPromises()
+  expect(writeText).toHaveBeenCalledWith("graph TD\n  A --> B")
+
+  await view.get('[data-mermaid-action="more"]').trigger("click")
+  await flushPromises()
+  await view.get('[data-mermaid-action="show-in-sidebar"]').trigger("click")
+  expect(mermaidSidebarTabs.value).toEqual([{ id: "mermaid-1", code: "graph TD\n  A --> B", source: { sessionId: "12", diagramId: "0" } }])
+
+  await view.get('[data-mermaid-action="more"]').trigger("click")
+  await flushPromises()
+  await view.get('[data-mermaid-action="show-in-new-window"]').trigger("click")
+  expect(openSpy).toHaveBeenCalledOnce()
+  expect(openSpy.mock.calls[0]![0]).toContain("#/mermaid?code=graph+TD%0A++A+--%3E+B&sessionId=12&diagramId=0")
+
+  const inlineDiagram = view.get('[data-mermaid="0"]').element as HTMLElement
+  const scrollIntoView = vi.fn()
+  inlineDiagram.scrollIntoView = scrollIntoView
+  const windowViewer = mount(MermaidViewer, {
+    attachTo: document.body,
+    props: { code: "graph TD\n  A --> B", mode: "window", source: { sessionId: "12", diagramId: "0" } },
+    global: { plugins: [i18n, router] },
+  })
+  await flushPromises()
+  await windowViewer.get('[data-mermaid-action="locate-message"]').trigger("click")
+  await flushPromises()
+  expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "center" })
+  expect(inlineDiagram.dataset.mermaidLocated).toBe("true")
+  windowViewer.unmount()
+
+  const copyButton = view.get("[data-math-copy]")
+  await copyButton.trigger("click")
+  await flushPromises()
+  expect(writeText).toHaveBeenCalledWith("\\int_0^1 x^2 \\, dx = \\frac{1}{3}")
+  expect(copyButton.attributes("data-copied")).toBe("true")
 })

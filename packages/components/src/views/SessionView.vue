@@ -3,12 +3,13 @@ import UiButton from "../components/common/UiButton.vue"
 import { LoaderCircle, SquareTerminal } from "@lucide/vue"
 import { storeToRefs } from "pinia"
 import { watchImmediate } from "@vueuse/core"
-import { computed, defineAsyncComponent, ref, watch } from "vue"
+import { computed, defineAsyncComponent, nextTick, ref, watch } from "vue"
 import { useI18n } from "vue-i18n"
-import { useRouter } from "vue-router"
+import { useRoute, useRouter } from "vue-router"
 import type { AgentSessionContext, AgentSnapshot } from "../../../../apps/daemon/src/agent-protocol.ts"
 import PaneHeader from "../components/chrome/PaneHeader.vue"
 import ResourcePath from "../components/chrome/ResourcePath.vue"
+import WindowToolbar from "../components/chrome/WindowToolbar.vue"
 import SessionComposer from "../components/composer/SessionComposer.vue"
 import AgentBacklog from "../components/session/AgentBacklog.vue"
 import AgentConversation from "../components/session/AgentConversation.vue"
@@ -16,9 +17,10 @@ import AgentNotice from "../components/session/AgentNotice.vue"
 import AgentPermissions from "../components/session/AgentPermissions.vue"
 import AgentSessionMenu from "../components/session/AgentSessionMenu.vue"
 import ForkSessionDialog from "../components/session/ForkSessionDialog.vue"
+import MermaidViewer from "../components/session/MermaidViewer.vue"
 import IconButton from "../components/common/IconButton.vue"
 import { useFleetStore } from "../stores/fleet.ts"
-import { useLayoutStore } from "../stores/layout.ts"
+import { pendingMermaidLocate, performMermaidLocateDom, useLayoutStore, type MermaidSource } from "../stores/layout.ts"
 import { useAgentSessionsStore } from "../stores/agent-sessions.ts"
 import { useTerminalsStore } from "../stores/terminals.ts"
 import { useFileTarget } from "../composables/useFileTarget.ts"
@@ -28,12 +30,19 @@ import { useSessionLabel } from "../composables/useSessionLabel.ts"
 const SessionTerminalPanel = defineAsyncComponent(() => import("../components/terminal/SessionTerminalPanel.vue"))
 const props = defineProps<{ sessionId: string }>()
 const { t } = useI18n()
+const route = useRoute()
 const router = useRouter()
 const sessionLabel = useSessionLabel()
 const fleet = useFleetStore()
 const agents = useAgentSessionsStore()
 const terminals = useTerminalsStore()
-const { terminalPanelOpen } = storeToRefs(useLayoutStore())
+const { sidebarOpen, terminalPanelOpen } = storeToRefs(useLayoutStore())
+const focusedMermaid = computed(() => typeof route.query.mermaid === "string" && route.query.mermaid ? route.query.mermaid : undefined)
+const focusedMermaidSource = computed<MermaidSource>(() => ({
+  sessionId: props.sessionId,
+  ...(typeof route.query.mermaidEntry === "string" && route.query.mermaidEntry ? { entryId: route.query.mermaidEntry } : {}),
+  ...(typeof route.query.mermaidDiagram === "string" && route.query.mermaidDiagram ? { diagramId: route.query.mermaidDiagram } : {}),
+}))
 const location = computed(() => fleet.findSession(props.sessionId))
 const resourceTarget = useFileTarget(() => location.value?.machine.id)
 const view = computed(() => agents.views[props.sessionId])
@@ -65,9 +74,22 @@ const actionError = ref<string | null>(null)
 const scroller = ref<HTMLElement | null>(null)
 const followBottom = ref(true)
 const scroll = () => { const el = scroller.value; if (el) followBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 100 }
-watchImmediate(() => props.sessionId, id => { busy.value = false; forkOpen.value = false; actionError.value = null; followBottom.value = true; void agents.open(id) })
+watchImmediate(() => props.sessionId, id => {
+  busy.value = false
+  forkOpen.value = false
+  actionError.value = null
+  followBottom.value = !pendingMermaidLocate.value || (!!pendingMermaidLocate.value.sessionId && pendingMermaidLocate.value.sessionId !== id)
+  void agents.open(id)
+})
 watch(() => [view.value?.events.length, view.value?.loading], () => {
-  if (!view.value?.loading && followBottom.value) scroller.value?.scrollTo({ top: scroller.value.scrollHeight })
+  if (!view.value?.loading && followBottom.value && !pendingMermaidLocate.value) scroller.value?.scrollTo({ top: scroller.value.scrollHeight })
+}, { flush: "post" })
+watch([pendingMermaidLocate, () => view.value?.loading, () => view.value?.events.length, focusedMermaid], async ([target, loading, , focused]) => {
+  if (!target || loading || focused) return
+  if (target.sessionId && target.sessionId !== props.sessionId) return
+  followBottom.value = false
+  await nextTick()
+  performMermaidLocateDom(target)
 }, { flush: "post" })
 async function action(operation: () => Promise<unknown>): Promise<void> {
   if (busy.value) return
@@ -133,4 +155,10 @@ async function checkOperation(operationId: string): Promise<void> {
   <SessionComposer v-if="location" v-model="draft" :location="location" :disabled="!active || !connected || snapshot?.session.lifecycle !== 'ready' || unresolvedSubmission || (run?.state !== 'running' && !canResume)" :submitting="busy" :active-turn="!!activeTurn" :can-steer="canSteer" :can-cancel="!!activeTurn && activeTurn.state !== 'cancelling' && connected && !busy" @submit="submit" @cancel="action(() => agents.cancel(sessionId, activeTurn!.id))" />
   <SessionTerminalPanel v-if="terminalPanelOpen && terminalWorktree" :key="terminalWorktree.id" :worktree="terminalWorktree" :read-only="!active" />
   <ForkSessionDialog v-if="forkOpen && snapshot" :key="sessionId" :context="forkContext" :retrying="!!pendingFork" :disabled="(!pendingFork && !canFork) || forkDisabled || !location?.machine.online || busy" :confirm="fork" @close="forkOpen = false" />
+  <div v-if="focusedMermaid" data-mermaid-focus-view class="absolute inset-0 z-20 flex flex-col bg-ui-canvas">
+    <div v-if="!sidebarOpen" class="app-drag flex h-12 shrink-0 items-center border-b border-ui-border pl-20 pr-3">
+      <WindowToolbar />
+    </div>
+    <MermaidViewer :key="focusedMermaid" :code="focusedMermaid" :source="focusedMermaidSource" mode="focus" class="min-h-0 flex-1 rounded-none border-0" />
+  </div>
 </template>

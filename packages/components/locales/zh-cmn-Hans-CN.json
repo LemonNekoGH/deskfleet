@@ -860,5 +860,17 @@
         "skip": "开启此权限之前，无法远程控制鼠标和键盘。你可以稍后在系统设置中开启。"
       }
     }
+  },
+  "mermaid": {
+    "title": "Mermaid 图表",
+    "zoomIn": "放大",
+    "zoomOut": "缩小",
+    "resetView": "重置缩放与位置",
+    "locateMessage": "定位到原始消息",
+    "focus": "聚焦",
+    "more": "更多",
+    "showInSidebar": "在侧边栏显示",
+    "showInNewWindow": "在新窗口显示",
+    "closeTab": "关闭 {title}"
   }
 }

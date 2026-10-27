@@ -1,3 +1,4 @@
+@import "katex/dist/katex.min.css";
 @import "./theme-tokens.css";
 
 /* presetMini has no preflight; borders and controls start unstyled. */
@@ -106,9 +107,11 @@ textarea {
   overflow-wrap: anywhere;
   user-select: text;
 }
-.ui-markdown > :first-child { margin-top: 0; }
-.ui-markdown > :last-child { margin-bottom: 0; }
-.ui-markdown :is(p, ul, ol, pre, blockquote, table) { margin: 0 0 0.875em; }
+.ui-markdown > :first-child,
+.ui-markdown-segment > :first-child { margin-top: 0; }
+.ui-markdown > :last-child,
+.ui-markdown-segment > :last-child { margin-bottom: 0; }
+.ui-markdown :is(p, ul, ol, pre, blockquote, table, .ui-math-block, .ui-mermaid, .ui-markdown-segment) { margin: 0 0 0.875em; }
 .ui-markdown :is(h1, h2, h3, h4, h5, h6) {
   margin: 1.25em 0 0.5em;
   font-size: 1em;
@@ -165,3 +168,40 @@ textarea {
 }
 .ui-markdown th { font-weight: 600; }
 .ui-markdown img { max-width: 100%; border-radius: 0.5rem; }
+.ui-markdown .ui-math-block {
+  position: relative;
+  overflow-x: auto;
+  padding: 0.625rem 2.5rem 0.625rem 0.875rem;
+  border: 1px solid var(--ui-color-border);
+  border-radius: 0.625rem;
+  background: var(--ui-color-surface);
+}
+.ui-markdown .ui-math-block .katex-display {
+  margin: 0;
+}
+.ui-math-copy {
+  position: absolute;
+  top: 0.375rem;
+  right: 0.375rem;
+  z-index: 1;
+}
+.ui-math-copy [data-icon-check] {
+  display: none;
+}
+.ui-math-copy[data-copied="true"] [data-icon-copy] {
+  display: none;
+}
+.ui-math-copy[data-copied="true"] [data-icon-check] {
+  display: block;
+  color: var(--ui-color-focus);
+}
+.ui-mermaid [data-mermaid-stage] > svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+[data-mermaid-located="true"] {
+  outline: 2px solid var(--ui-color-focus);
+  outline-offset: 2px;
+}
