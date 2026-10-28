@@ -62,7 +62,7 @@ test("browses synchronized history with the machine offline and isolates equal l
   }
   const central = {
     status: vi.fn(async () => ({ serverUrl: "https://fleet.example", user: signedIn ? { id: "u1", name: "Ada" } : undefined })),
-    site: vi.fn(async () => ({ siteName: "deskfleet", announcement: "", allowTeamCreation: true, termsOfServiceUrl: "", privacyTermsUrl: "" })),
+    site: vi.fn(async () => ({ siteName: "DeskFleet", announcement: "", allowTeamCreation: true, termsOfServiceUrl: "", privacyTermsUrl: "" })),
     login: vi.fn(async () => { signedIn = true }), logout: vi.fn(async () => { signedIn = false }),
     teams: vi.fn(async () => [{ id: "7", name: "Team", role: "member" }]),
     members: vi.fn(async () => [{ userId: "u1", name: "Ada", role: "member" }]),
@@ -102,7 +102,7 @@ test("browses synchronized history with the machine offline and isolates equal l
   await page().get('button[aria-label="Ada"]').trigger("click")
   await page().findAll('button[role="menuitem"]').find(button => button.text() === "Sign out")!.trigger("click")
   await flushPromises()
-  expect(view.text()).toContain("Sign in to deskfleet")
+  expect(view.text()).toContain("Sign in to DeskFleet")
   expect(view.text()).not.toContain("Workspace 102")
   await page().get("form").trigger("submit")
   await settled(() => expect(view!.text()).toContain("Workspace 101"))

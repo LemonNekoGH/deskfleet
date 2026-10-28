@@ -36,7 +36,7 @@ export function fakeCentral(options: FakeCentralOptions = {}) {
   const state = {
     signedIn: options.signedIn ?? true,
     siteAdmin: options.siteAdmin ?? false,
-    site: { siteName: "deskfleet", announcement: "", allowTeamCreation: true, termsOfServiceUrl: "", privacyTermsUrl: "", ...options.site },
+    site: { siteName: "DeskFleet", announcement: "", allowTeamCreation: true, termsOfServiceUrl: "", privacyTermsUrl: "", ...options.site },
     teams: options.teams ?? [{ id: "team-1", name: "Design team", role: "admin" as const }],
     machines: options.machines ?? [],
     members: options.members ?? [

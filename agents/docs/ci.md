@@ -1,6 +1,6 @@
 # Continuous integration
 
-deskfleet follows [Heron's CI structure](https://github.com/minori-live/heron/blob/main/agents/docs/ci.md):
+DeskFleet follows [Heron's CI structure](https://github.com/minori-live/heron/blob/main/agents/docs/ci.md):
 one orchestrator, reusable Test and Build workflows, a shared setup action, and
 a stable `Gate` result for branch protection.
 
@@ -217,7 +217,7 @@ caches are still saved from main only.
 `mise run ci:report:sccache` reports cache hit, miss, write, and error counters.
 
 Heron's Nix, coverage upload, Playwright, plug-in SDK, signing, and symbol-upload
-jobs are not part of this workflow. Deskfleet keeps the orchestrator, the reusable
+jobs are not part of this workflow. DeskFleet keeps the orchestrator, the reusable
 Test and Build workflows, and this cache policy.
 
 ## Local validation

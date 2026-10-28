@@ -109,7 +109,7 @@ async fn site_grants_settings_revocation_and_audit_are_transactional() {
         .await
         .unwrap();
     let defaults = SiteSettings {
-        site_name: "deskfleet".into(),
+        site_name: "DeskFleet".into(),
         announcement: String::new(),
         allow_team_creation: true,
         terms_of_service_url: String::new(),

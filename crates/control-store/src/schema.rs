@@ -100,6 +100,21 @@ pub async fn migrate(db: &DatabaseConnection) -> Result<()> {
         tx.execute_unprepared("INSERT INTO cp_migrations (version) VALUES (7)")
             .await?;
     }
+    if tx
+        .query_one_raw(sql(
+            "SELECT version FROM cp_migrations WHERE version=8",
+            vec![],
+        ))
+        .await?
+        .is_none()
+    {
+        tx.execute_unprepared(
+            "UPDATE cp_site_settings SET site_name='DeskFleet' WHERE singleton AND site_name='deskfleet'",
+        )
+        .await?;
+        tx.execute_unprepared("INSERT INTO cp_migrations (version) VALUES (8)")
+            .await?;
+    }
     tx.commit().await?;
     Ok(())
 }
@@ -108,6 +123,8 @@ pub async fn migrate(db: &DatabaseConnection) -> Result<()> {
 pub async fn down(db: &DatabaseConnection) -> Result<()> {
     let tx = db.begin().await?;
     tx.execute_unprepared("SELECT pg_advisory_xact_lock(761946021)")
+        .await?;
+    tx.execute_unprepared("DELETE FROM cp_migrations WHERE version=8")
         .await?;
     if tx
         .query_one_raw(sql(
@@ -118,6 +135,8 @@ pub async fn down(db: &DatabaseConnection) -> Result<()> {
         .is_some()
     {
         tx.execute_unprepared(include_str!("site_terms_down.sql"))
+            .await?;
+        tx.execute_unprepared("DELETE FROM cp_migrations WHERE version=7")
             .await?;
     }
     if tx
