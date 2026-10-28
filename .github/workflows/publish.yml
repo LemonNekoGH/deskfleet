@@ -90,7 +90,7 @@ jobs:
             "deskfleet-$VERSION-mac-arm64.dmg"
             "deskfleet-$VERSION-mac-arm64.zip"
             "deskfleet-$VERSION-win-x64.exe"
-            "deskfleet-$VERSION-linux-x64.AppImage"
+            "deskfleet-$VERSION-linux-x86_64.AppImage"
             "deskfleet-$VERSION-linux-arm64.AppImage"
             deskfleet-linux-x64.tar.gz
             deskfleet-linux-arm64.tar.gz

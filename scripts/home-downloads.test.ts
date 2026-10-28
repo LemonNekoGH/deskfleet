@@ -1,10 +1,14 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
 import { fetchLatestRelease, findDownload, releasesPage, type LatestRelease } from "../docs/.vitepress/theme/components/home/home-downloads.ts"
 
 const assetNames = [
   "deskfleet-0.2.0-mac-arm64.dmg", "deskfleet-0.2.0-mac-arm64.zip", "deskfleet-0.2.0-win-x64.exe",
-  "deskfleet-0.2.0-linux-x64.AppImage", "deskfleet-0.2.0-linux-arm64.AppImage",
+  "deskfleet-0.2.0-linux-x86_64.AppImage", "deskfleet-0.2.0-linux-arm64.AppImage",
   "deskfleet-macos-arm64.tar.gz", "deskfleet-windows-x64.tar.gz", "deskfleet-linux-x64.tar.gz", "deskfleet-linux-arm64.tar.gz",
 ]
 const release: LatestRelease = {
@@ -18,9 +22,27 @@ test("download selection distinguishes installers, archives, and Linux architect
   assert.equal(findDownload(release, "headless", "macos", "x64")?.name, "deskfleet-macos-arm64.tar.gz")
   assert.equal(findDownload(release, "headless", "windows", "arm64")?.name, "deskfleet-windows-x64.tar.gz")
   for (const arch of ["x64", "arm64"] as const) {
-    assert.equal(findDownload(release, "desktop", "linux", arch)?.name, `deskfleet-0.2.0-linux-${arch}.AppImage`)
+    const appImageArchitecture = arch === "x64" ? "x86_64" : "arm64"
+    assert.equal(findDownload(release, "desktop", "linux", arch)?.name, `deskfleet-0.2.0-linux-${appImageArchitecture}.AppImage`)
     assert.equal(findDownload(release, "headless", "linux", arch)?.name, `deskfleet-linux-${arch}.tar.gz`)
   }
+})
+
+test("release verification accepts the installer names produced by packaging", { skip: process.platform === "win32" }, context => {
+  const yaml = readFileSync(join(import.meta.dirname, "../.github/workflows/publish.yml"), "utf8")
+  const block = yaml.match(/^      - name: Verify release assets\n[\s\S]*?^        run: \|\n((?:          .*\n)+)/m)?.[1]
+  assert.ok(block, "Missing release asset verification step")
+  const directory = mkdtempSync(join(tmpdir(), "deskfleet-release-assets-"))
+  context.after(() => rmSync(directory, { recursive: true, force: true }))
+  mkdirSync(join(directory, "release-assets"))
+  for (const name of assetNames) writeFileSync(join(directory, "release-assets", name), "fixture")
+  const verify = () => spawnSync("bash", ["-eo", "pipefail", "-c", block.replace(/^ {10}/gm, "")], {
+    cwd: directory, env: { ...process.env, VERSION: release.version }, encoding: "utf8",
+  })
+  const result = verify()
+  assert.equal(result.status, 0, result.stderr)
+  unlinkSync(join(directory, "release-assets", "deskfleet-0.2.0-linux-x86_64.AppImage"))
+  assert.notEqual(verify().status, 0, "A missing x86_64 installer must prevent publication")
 })
 
 test("missing packages fall back to the release page without selecting another architecture", () => {
