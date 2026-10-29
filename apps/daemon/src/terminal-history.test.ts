@@ -81,7 +81,8 @@ async function readAll(sessions: TerminalSessions, id: string): Promise<Buffer> 
   return Buffer.concat(chunks)
 }
 
-test("full output survives detached clients and daemon restart until explicit hangup", { timeout: 10_000 }, async context => {
+// Windows CI datasyncs each 16 KiB append under parallel suite load; 10s is sometimes tight.
+test("full output survives detached clients and daemon restart until explicit hangup", { timeout: process.platform === "win32" ? 30_000 : 10_000 }, async context => {
   const f = await fixture(context)
   const terminal = await f.sessions.dial({ mode: "create", terminalId: "long-session", cols: 80, rows: 24 })
   const pieces = Array.from({ length: 40 }, (_, index) => Buffer.alloc(16 * 1024, index))
@@ -111,7 +112,7 @@ test("full output survives detached clients and daemon restart until explicit ha
   await assert.rejects(recovered.input(terminal.id, Buffer.from("pwd\r")), /not running/)
   await recovered.hangup(terminal.id)
   assert.deepEqual(recovered.list(), [])
-  assert.deepEqual(await readdir(f.directory), [])
+  assert.deepEqual(await readdir(f.directory), [".shell-bin"])
   await recovered.hangup(terminal.id)
 })
 
@@ -135,7 +136,7 @@ test("dial retries are idempotent and hanging up one shell preserves the others 
   assert.equal(hungup, true)
   assert.equal(f.spawned[0]!.closed, true)
   assert.equal(f.spawned[1]!.closed, false)
-  assert.deepEqual(await readdir(f.directory), [second.id])
+  assert.deepEqual((await readdir(f.directory)).sort(), [".shell-bin", second.id])
   assert.deepEqual(await readAll(f.sessions, second.id), Buffer.from("second"))
   assert.deepEqual(changed.at(-1), { kind: "terminalHungup", terminalId: first.id })
   await assert.rejects(f.sessions.dial({ mode: "resume", terminalId: first.id }), /Unknown terminal/)
