@@ -55,13 +55,31 @@ export class OnboardingController {
         } else return this.#save(this.#initialStep())
       }
     }
-    return { ...this.#state }
+    // The permission list preserves saved Wayland consent while its backend is unknown.
+    if (ONBOARDING_PERMISSIONS.includes(this.#state.step as OnboardingPermission)
+      && !this.#permissionSteps().includes(this.#state.step as OnboardingPermission)) return this.#save("account")
+    return this.#snapshot(this.#state)
+  }
+
+  #permissionSteps() {
+    const backend = this.#options.localAgent.state.linuxDesktopBackend
+    // A saved Portal step may continue while reconnecting; fresh profiles need a known backend.
+    if (backend === undefined && this.#state
+      && ONBOARDING_PERMISSIONS.includes(this.#state.step as OnboardingPermission)) {
+      return onboardingPermissions(this.#options.platform, "wayland")
+    }
+    return onboardingPermissions(this.#options.platform, backend)
+  }
+
+  #snapshot(state: OnboardingState): OnboardingState {
+    const backend = this.#options.localAgent.state.linuxDesktopBackend
+    return this.#options.platform === "linux" && backend !== undefined ? { ...state, linuxDesktopBackend: backend } : { ...state }
   }
 
   #initialStep(): OnboardingStep {
     const local = this.#options.localAgent.state
     return local.enabled || local.status === "running"
-      ? onboardingPermissions(this.#options.platform)[0] ?? "account" : "account"
+      ? this.#permissionSteps()[0] ?? "account" : "account"
   }
 
   async permissions() {
@@ -72,15 +90,28 @@ export class OnboardingController {
 
   requestPermission(permission: OnboardingPermission) {
     return this.#run(async () => {
-      await this.#requireStep(permission)
+      const current = await this.get()
+      if (current.step !== permission) {
+        if ((current.step === "account" || current.step === "complete")
+          && !this.#permissionSteps().includes(permission)) {
+          throw new Error("Welcome setup is not on a permission step")
+        }
+        throw new Error("Welcome setup step has changed")
+      }
       return this.#options.localAgent.requestPermission(permission)
     })
   }
 
   advancePermission(permission: OnboardingPermission): Promise<OnboardingState> {
     return this.#run(async () => {
-      await this.#requireStep(permission)
-      const permissions = onboardingPermissions(this.#options.platform)
+      const current = await this.get()
+      // X11 hello can rewrite a provisional Portal step; Skip/Continue must reach account.
+      if (current.step !== permission) {
+        if ((current.step === "account" || current.step === "complete")
+          && !this.#permissionSteps().includes(permission)) return current
+        throw new Error("Welcome setup step has changed")
+      }
+      const permissions = this.#permissionSteps()
       const index = permissions.indexOf(permission)
       return this.#save(permissions[index + 1] ?? "account")
     })
@@ -111,6 +142,6 @@ export class OnboardingController {
     await writeFile(`${path}.tmp`, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 })
     await rename(`${path}.tmp`, path)
     this.#state = state
-    return { ...state }
+    return this.#snapshot(state)
   }
 }

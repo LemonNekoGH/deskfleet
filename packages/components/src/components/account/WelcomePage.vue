@@ -23,36 +23,76 @@ const error = ref(session.notice.value)
 const permissions = ref<Partial<DesktopPermissionsState>>({})
 // Permission events can arrive before an older IPC snapshot resolves.
 let permissionRevision = 0
-const linux = computed(() => props.host.platform === "linux")
-const permissionSteps = computed(() => onboardingPermissions(props.host.platform))
+let currentBackend = props.state.linuxDesktopBackend
+let reconcileNeeded = false
+const wayland = computed(() => props.host.platform === "linux" && (
+  props.state.linuxDesktopBackend === "wayland"
+  || props.state.linuxDesktopBackend === undefined && ONBOARDING_PERMISSIONS.includes(step.value as OnboardingPermission)
+))
+const permissionSteps = computed(() => {
+  const backend = props.state.linuxDesktopBackend === undefined
+    && ONBOARDING_PERMISSIONS.includes(step.value as OnboardingPermission)
+    ? "wayland"
+    : props.state.linuxDesktopBackend
+  return onboardingPermissions(props.host.platform, backend)
+})
 const permission = computed(() => permissionSteps.value.find(value => value === step.value))
 const currentPermission = computed(() => permission.value ? permissions.value[`${permission.value}Permission`] : undefined)
 const granted = computed(() => ["granted", "not-required"].includes(currentPermission.value?.status ?? ""))
-const requesting = computed(() => currentPermission.value?.status === "requesting" || linux.value
+const requesting = computed(() => currentPermission.value?.status === "requesting" || wayland.value
   && permissionSteps.value.some(kind => permissions.value[`${kind}Permission`]?.status === "requesting"))
-const canRequest = computed(() => !granted.value && !requesting.value && (!linux.value
+const canRequest = computed(() => !granted.value && !requesting.value && (!wayland.value
   || !refreshing.value && currentPermission.value?.status !== "checking"))
-const permissionMessages = computed(() => `welcome.${linux.value ? "wayland" : "permissions"}.${permission.value}`)
+const permissionMessages = computed(() => `welcome.${wayland.value ? "wayland" : "permissions"}.${permission.value}`)
 const steps = computed<OnboardingStep[]>(() => [...(firstRun ? permissionSteps.value : []), "account"])
 const icons = { fullDiskAccess: FolderOpen, screenCapture: Monitor, accessibility: MousePointer2, account: KeyRound, complete: Check }
 const currentIndex = computed(() => steps.value.indexOf(step.value))
 const message = (reason: unknown) => reason instanceof Error ? reason.message : String(reason)
-const stepLabel = (value: OnboardingStep) => t(linux.value && (value === "screenCapture" || value === "accessibility")
+const stepLabel = (value: OnboardingStep) => t(wayland.value && (value === "screenCapture" || value === "accessibility")
   ? `welcome.wayland.${value}.title` : `welcome.steps.${value}`)
 
 function move(next: OnboardingState): void {
+  // Keep act/refresh errors when reconcile only records a late Linux backend.
+  if (next.step !== step.value) error.value = undefined
   step.value = next.step
-  error.value = undefined
+  currentBackend = next.linuxDesktopBackend
   emit("change", next)
 }
 
+function noteBackend(value: Partial<DesktopPermissionsState>): void {
+  if (firstRun && props.host.platform === "linux" && value.linuxDesktopBackend !== undefined
+    && value.linuxDesktopBackend !== currentBackend) reconcileNeeded = true
+}
+
+// A retry can connect to X11 after the guide has already opened. Read the
+// host's normalized step once permission operations finish; the host owns it.
+async function reconcileOnboarding(): Promise<void> {
+  if (!onboarding) return
+  while (reconcileNeeded && !pending.value && !refreshing.value) {
+    reconcileNeeded = false
+    refreshing.value = true
+    try {
+      const next = await onboarding.get()
+      if (next.step !== step.value || next.linuxDesktopBackend !== currentBackend) move(next)
+    } catch (reason) { error.value = message(reason) }
+    finally { refreshing.value = false }
+  }
+}
+
 async function act(work: () => Promise<void>): Promise<void> {
-  if (pending.value) return
+  if (pending.value || refreshing.value) return
+  const previousStep = step.value
   pending.value = true
   error.value = undefined
   try { await work() }
-  catch (reason) { error.value = message(reason) }
-  finally { pending.value = false }
+  catch (reason) {
+    error.value = message(reason)
+    if (firstRun && props.host.platform === "linux") reconcileNeeded = true
+  } finally {
+    pending.value = false
+    await reconcileOnboarding()
+    if (step.value !== previousStep) await refreshPermissions()
+  }
 }
 
 async function submit(): Promise<void> {
@@ -64,17 +104,24 @@ async function submit(): Promise<void> {
 }
 
 async function refreshPermissions(): Promise<void> {
-  if (!onboarding || !permission.value || refreshing.value) return
+  if (!onboarding || !permission.value || pending.value || refreshing.value) return
   refreshing.value = true
   const requestedStep = step.value
   const revision = permissionRevision
   try {
     const value = await onboarding.permissions()
-    if (revision === permissionRevision) permissions.value = value
+    if (revision === permissionRevision) {
+      permissions.value = value
+      noteBackend(value)
+    }
     if (step.value === requestedStep) error.value = undefined
   } catch (reason) {
     if (step.value === requestedStep) error.value = message(reason)
-  } finally { refreshing.value = false }
+    if (firstRun && props.host.platform === "linux") reconcileNeeded = true
+  } finally {
+    refreshing.value = false
+    await reconcileOnboarding()
+  }
 }
 
 async function requestPermission(kind: OnboardingPermission): Promise<void> {
@@ -82,7 +129,10 @@ async function requestPermission(kind: OnboardingPermission): Promise<void> {
   await act(async () => {
     const revision = ++permissionRevision
     const value = await onboarding!.requestPermission(kind)
-    if (revision === permissionRevision) permissions.value = value
+    if (revision === permissionRevision) {
+      permissions.value = value
+      noteBackend(value)
+    }
   })
 }
 
@@ -92,12 +142,14 @@ async function advancePermission(kind: OnboardingPermission): Promise<void> {
 
 whenever(permission, () => { void refreshPermissions() }, { immediate: true })
 const unsubscribe = onboarding ? props.host.settings.onChanged(state => {
-  if (!ONBOARDING_PERMISSIONS.some(kind => state[`${kind}Permission`])) return
+  if (!ONBOARDING_PERMISSIONS.some(kind => state[`${kind}Permission`]) && state.linuxDesktopBackend === undefined) return
   ++permissionRevision
   for (const kind of ONBOARDING_PERMISSIONS) {
     const value = state[`${kind}Permission`]
     if (value) permissions.value[`${kind}Permission`] = value
   }
+  noteBackend(state)
+  void reconcileOnboarding()
 }) : undefined
 useEventListener(window, "focus", refreshPermissions)
 onBeforeUnmount(() => { unsubscribe?.() })
@@ -132,22 +184,22 @@ onBeforeUnmount(() => { unsubscribe?.() })
           <h1 class="m-0 text-xl font-semibold">{{ stepLabel(permission) }}</h1>
           <p class="m-0 mt-3 text-sm leading-relaxed text-ui-text-muted">{{ t(`${permissionMessages}.description`) }}</p>
           <div class="my-6 rounded-lg border border-ui-border bg-ui-sidebar p-4">
-            <p class="m-0 text-xs font-medium">{{ t(linux ? "welcome.wayland.dialog" : "welcome.systemSettings") }}</p>
-            <p class="m-0 mt-2 text-sm leading-relaxed text-ui-text-muted">{{ t(`${permissionMessages}.${linux ? 'instructions' : 'path'}`) }}</p>
-            <p class="m-0 mt-3 text-xs leading-relaxed text-ui-text-muted">{{ t(linux ? "welcome.wayland.shared" : "welcome.permissionRestart") }}</p>
+            <p class="m-0 text-xs font-medium">{{ t(wayland ? "welcome.wayland.dialog" : "welcome.systemSettings") }}</p>
+            <p class="m-0 mt-2 text-sm leading-relaxed text-ui-text-muted">{{ t(`${permissionMessages}.${wayland ? 'instructions' : 'path'}`) }}</p>
+            <p class="m-0 mt-3 text-xs leading-relaxed text-ui-text-muted">{{ t(wayland ? "welcome.wayland.shared" : "welcome.permissionRestart") }}</p>
           </div>
           <p role="status" class="m-0 mb-4 text-sm" :class="granted ? 'text-ui-text' : 'text-ui-text-muted'">
-            {{ t(linux && requesting ? 'welcome.wayland.requesting' : `welcome.permissionStatus.${currentPermission?.status ?? 'checking'}`) }}
+            {{ t(wayland && requesting ? 'welcome.wayland.requesting' : `welcome.permissionStatus.${currentPermission?.status ?? 'checking'}`) }}
           </p>
           <p v-if="error || currentPermission?.error" role="alert" class="m-0 mb-4 break-words text-sm text-ui-danger">{{ error || currentPermission?.error }}</p>
           <div class="flex flex-wrap gap-2">
-            <UiButton variant="primary" v-if="!granted" type="button" :disabled="pending || !canRequest" @click="requestPermission(permission)">{{ t(linux ? "welcome.wayland.retry" : "welcome.openSettings") }}</UiButton>
+            <UiButton variant="primary" v-if="!granted" type="button" :disabled="pending || refreshing || !canRequest" @click="requestPermission(permission)">{{ t(wayland ? "welcome.wayland.retry" : "welcome.openSettings") }}</UiButton>
             <UiButton type="button" :disabled="pending || refreshing" @click="refreshPermissions">{{ t(refreshing ? "welcome.checking" : "welcome.checkAgain") }}</UiButton>
-            <UiButton variant="primary" v-if="granted" type="button" class="ml-auto" :disabled="pending" @click="advancePermission(permission)">{{ t("welcome.continue") }}<ChevronRight :size="15" aria-hidden="true" /></UiButton>
+            <UiButton variant="primary" v-if="granted" type="button" class="ml-auto" :disabled="pending || refreshing" @click="advancePermission(permission)">{{ t("welcome.continue") }}<ChevronRight :size="15" aria-hidden="true" /></UiButton>
           </div>
           <template v-if="!granted">
             <p class="m-0 mt-5 text-xs leading-relaxed text-ui-text-muted">{{ t(`${permissionMessages}.skip`) }}</p>
-            <button type="button" class="mt-3 w-fit cursor-pointer border-0 bg-transparent p-0 text-sm text-ui-text-muted underline underline-offset-4 disabled:cursor-default disabled:opacity-50" :disabled="pending || requesting" @click="advancePermission(permission)">{{ t("welcome.skip") }}</button>
+            <button type="button" class="mt-3 w-fit cursor-pointer border-0 bg-transparent p-0 text-sm text-ui-text-muted underline underline-offset-4 disabled:cursor-default disabled:opacity-50" :disabled="pending || refreshing || requesting" @click="advancePermission(permission)">{{ t("welcome.skip") }}</button>
           </template>
         </template>
         <form v-else class="flex flex-col gap-5" @submit.prevent="submit">
@@ -156,7 +208,7 @@ onBeforeUnmount(() => { unsubscribe?.() })
             <p class="m-0 mt-3 text-sm leading-relaxed text-ui-text-muted">{{ t("account.signInDescription") }}</p>
           </div>
           <p v-if="error" role="alert" class="m-0 break-words text-sm text-ui-danger">{{ error }}</p>
-          <UiButton variant="primary" class="min-h-9 text-sm" type="submit" :disabled="pending">
+          <UiButton variant="primary" class="min-h-9 text-sm" type="submit" :disabled="pending || refreshing">
             {{ session.account.value.user ? t("welcome.continueAs", { name: session.account.value.user.name }) : t(pending ? "account.signingIn" : "account.continueSignIn") }}
           </UiButton>
         </form>

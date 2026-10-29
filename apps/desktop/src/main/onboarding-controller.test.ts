@@ -13,7 +13,7 @@ async function fixture(platform: NodeJS.Platform = "darwin") {
   directories.push(directory)
   const path = join(directory, "onboarding.json")
   const permissions: DesktopPermissionsState = { fullDiskAccessPermission: { status: "denied" }, screenCapturePermission: { status: "denied" }, accessibilityPermission: { status: "granted" } }
-  const state: LocalAgentState = { enabled: true, status: "running" }
+  const state: LocalAgentState = { enabled: true, status: "running", ...(platform === "linux" ? { linuxDesktopBackend: "wayland" as const } : {}) }
   const localAgent = {
     state,
     refreshPermissions: vi.fn(async () => permissions),
@@ -47,7 +47,7 @@ test("Linux guides screen and input access, reuses startup authorization, and re
     screenCapturePermission: { status: "requesting" },
     accessibilityPermission: { status: "requesting" },
   })
-  expect(await f.controller.get()).toEqual({ step: "screenCapture" })
+  expect(await f.controller.get()).toEqual({ linuxDesktopBackend: "wayland", step: "screenCapture" })
   expect(await f.controller.permissions()).toMatchObject({ screenCapturePermission: { status: "requesting" } })
   expect(f.localAgent.requestPermission).not.toHaveBeenCalled()
   await expect(f.controller.requestPermission("fullDiskAccess")).rejects.toThrow("step has changed")
@@ -57,11 +57,11 @@ test("Linux guides screen and input access, reuses startup authorization, and re
     accessibilityPermission: { status: "granted" },
   })
   expect(await f.controller.permissions()).toMatchObject({ accessibilityPermission: { status: "granted" } })
-  expect(await f.controller.advancePermission("screenCapture")).toEqual({ step: "accessibility" })
+  expect(await f.controller.advancePermission("screenCapture")).toEqual({ linuxDesktopBackend: "wayland", step: "accessibility" })
   const resumed = f.restart()
-  expect(await resumed.get()).toEqual({ step: "accessibility" })
-  expect(await resumed.advancePermission("accessibility")).toEqual({ step: "account" })
-  expect(await resumed.complete()).toEqual({ step: "complete" })
+  expect(await resumed.get()).toEqual({ linuxDesktopBackend: "wayland", step: "accessibility" })
+  expect(await resumed.advancePermission("accessibility")).toEqual({ linuxDesktopBackend: "wayland", step: "account" })
+  expect(await resumed.complete()).toEqual({ linuxDesktopBackend: "wayland", step: "complete" })
   expect(f.localAgent.requestPermission).not.toHaveBeenCalled()
 })
 
@@ -70,10 +70,10 @@ test("Linux welcome retries or defers desktop permissions without adding Full Di
   await f.controller.get()
   await f.controller.requestPermission("screenCapture")
   expect(f.localAgent.requestPermission).toHaveBeenCalledExactlyOnceWith("screenCapture")
-  expect(await f.controller.advancePermission("screenCapture")).toEqual({ step: "accessibility" })
+  expect(await f.controller.advancePermission("screenCapture")).toEqual({ linuxDesktopBackend: "wayland", step: "accessibility" })
   await f.controller.requestPermission("accessibility")
   expect(f.localAgent.requestPermission).toHaveBeenLastCalledWith("accessibility")
-  expect(await f.controller.advancePermission("accessibility")).toEqual({ step: "account" })
+  expect(await f.controller.advancePermission("accessibility")).toEqual({ linuxDesktopBackend: "wayland", step: "account" })
 })
 
 test("Windows skips OS permission steps", async () => {
@@ -82,18 +82,27 @@ test("Windows skips OS permission steps", async () => {
   expect(f.localAgent.requestPermission).not.toHaveBeenCalled()
 })
 
+test("Windows normalizes a saved permission step before completing account setup", async () => {
+  const f = await fixture("win32")
+  await writeFile(f.path, JSON.stringify({ step: "screenCapture" }))
+  expect(await f.controller.get()).toEqual({ step: "account" })
+  expect(JSON.parse(await readFile(f.path, "utf8"))).toEqual({ step: "account" })
+  expect(await f.controller.complete()).toEqual({ step: "complete" })
+  expect(f.localAgent.requestPermission).not.toHaveBeenCalled()
+})
+
 test.each(["darwin", "linux"] as const)("disabled local Agent preference skips %s local permissions", async platform => {
   const f = await fixture(platform)
   f.localAgent.state.enabled = false
   f.localAgent.state.status = "stopped"
-  expect(await f.controller.get()).toEqual({ step: "account" })
+  expect(await f.controller.get()).toEqual({ step: "account", ...(platform === "linux" ? { linuxDesktopBackend: "wayland" } : {}) })
   expect(f.localAgent.state.enabled).toBe(false)
 })
 
 test("Linux guides an attached running daemon when desktop auto-start is disabled", async () => {
   const f = await fixture("linux")
   f.localAgent.state.enabled = false
-  expect(await f.controller.get()).toEqual({ step: "screenCapture" })
+  expect(await f.controller.get()).toEqual({ linuxDesktopBackend: "wayland", step: "screenCapture" })
   expect(f.localAgent.state.enabled).toBe(false)
   expect(f.localAgent.requestPermission).not.toHaveBeenCalled()
 })
@@ -111,7 +120,7 @@ test.each(["darwin", "linux", "win32"] as const)("old server setup progress resu
   const f = await fixture(platform)
   await writeFile(f.path, JSON.stringify({ step: "server" }))
   const step = platform === "darwin" ? "fullDiskAccess" : platform === "linux" ? "screenCapture" : "account"
-  expect(await f.controller.get()).toEqual({ step })
+  expect(await f.controller.get()).toEqual({ step, ...(platform === "linux" ? { linuxDesktopBackend: "wayland" } : {}) })
   expect(JSON.parse(await readFile(f.path, "utf8"))).toEqual({ step })
 })
 
@@ -174,4 +183,76 @@ test("invalid persisted progress is reported", async () => {
   const f = await fixture()
   await writeFile(f.path, JSON.stringify({ step: "anything" }))
   await expect(f.controller.get()).rejects.toThrow("Invalid welcome setup progress")
+})
+
+
+test.each(["x11", null] as const)("Linux %s skips consent using the connected daemon backend", async backend => {
+  const f = await fixture("linux")
+  f.localAgent.state.linuxDesktopBackend = backend
+  expect(await f.controller.get()).toEqual({ step: "account", linuxDesktopBackend: backend })
+  expect(f.localAgent.requestPermission).not.toHaveBeenCalled()
+  expect(f.localAgent.refreshPermissions).not.toHaveBeenCalled()
+  expect(await f.controller.complete()).toEqual({ step: "complete", linuxDesktopBackend: backend })
+  expect(JSON.parse(await readFile(f.path, "utf8"))).toEqual({ step: "complete" })
+})
+
+test("switching from Wayland to X11 skips saved Portal consent steps", async () => {
+  const f = await fixture("linux")
+  await writeFile(f.path, JSON.stringify({ step: "accessibility" }))
+  f.localAgent.state.linuxDesktopBackend = "x11"
+  expect(await f.restart().get()).toEqual({ step: "account", linuxDesktopBackend: "x11" })
+  expect(f.localAgent.requestPermission).not.toHaveBeenCalled()
+})
+
+test("a permission refresh that reconnects to X11 normalizes and persists the account step", async () => {
+  const f = await fixture("linux")
+  f.localAgent.state.linuxDesktopBackend = undefined
+  f.localAgent.state.status = "error"
+  await writeFile(f.path, JSON.stringify({ step: "screenCapture" }))
+  expect(await f.controller.get()).toEqual({ step: "screenCapture" })
+  f.localAgent.refreshPermissions.mockImplementationOnce(async () => {
+    f.localAgent.state.linuxDesktopBackend = "x11"
+    f.localAgent.state.status = "running"
+    return { linuxDesktopBackend: "x11", fullDiskAccessPermission: { status: "not-required" }, screenCapturePermission: { status: "not-required" }, accessibilityPermission: { status: "not-required" } }
+  })
+  expect(await f.controller.permissions()).toMatchObject({ linuxDesktopBackend: "x11" })
+  expect(await f.controller.get()).toEqual({ step: "account", linuxDesktopBackend: "x11" })
+  expect(JSON.parse(await readFile(f.path, "utf8"))).toEqual({ step: "account" })
+  expect(await f.controller.complete()).toEqual({ step: "complete", linuxDesktopBackend: "x11" })
+})
+
+
+test("a temporarily disconnected Wayland daemon preserves its saved permission step", async () => {
+  const f = await fixture("linux")
+  await writeFile(f.path, JSON.stringify({ step: "accessibility" }))
+  f.localAgent.state.linuxDesktopBackend = undefined
+  f.localAgent.state.status = "error"
+  f.localAgent.state.error = "Local Agent disconnected"
+  expect(await f.restart().get()).toEqual({ step: "accessibility" })
+  expect(JSON.parse(await readFile(f.path, "utf8"))).toEqual({ step: "accessibility" })
+  expect(await f.restart().advancePermission("accessibility")).toEqual({ step: "account" })
+})
+
+test("a fresh Linux Agent does not assume Wayland Portal steps before hello", async () => {
+  const f = await fixture("linux")
+  f.localAgent.state.linuxDesktopBackend = undefined
+  f.localAgent.state.status = "error"
+  f.localAgent.state.error = "Daemon startup failed"
+  expect(await f.controller.get()).toEqual({ step: "account" })
+  expect(JSON.parse(await readFile(f.path, "utf8"))).toEqual({ step: "account" })
+  expect(f.localAgent.requestPermission).not.toHaveBeenCalled()
+  expect(await f.controller.complete()).toEqual({ step: "complete" })
+})
+
+test("X11 hello after a missing-backend Portal step lets Skip reach account", async () => {
+  const f = await fixture("linux")
+  f.localAgent.state.linuxDesktopBackend = undefined
+  await writeFile(f.path, JSON.stringify({ step: "screenCapture" }))
+  const controller = f.restart()
+  expect(await controller.get()).toEqual({ step: "screenCapture" })
+  f.localAgent.state.linuxDesktopBackend = "x11"
+  expect(await controller.advancePermission("screenCapture")).toEqual({ step: "account", linuxDesktopBackend: "x11" })
+  expect(JSON.parse(await readFile(f.path, "utf8"))).toEqual({ step: "account" })
+  await expect(controller.requestPermission("screenCapture")).rejects.toThrow("permission step")
+  expect(await controller.complete()).toEqual({ step: "complete", linuxDesktopBackend: "x11" })
 })

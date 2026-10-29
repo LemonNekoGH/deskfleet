@@ -13,14 +13,14 @@ afterEach(() => { view?.unmount(); view = undefined; vi.restoreAllMocks() })
 
 function setup(initialStep: OnboardingStep = "fullDiskAccess", signedIn = false, platform: DeskfleetDesktopApi["platform"] = "darwin") {
   const fake = fakeCentral({ signedIn, teams: [] })
-  const state: OnboardingState = { step: initialStep }
+  const state: OnboardingState = { step: initialStep, ...(platform === "linux" ? { linuxDesktopBackend: "wayland" as const } : {}) }
   const permissions: DesktopPermissionsState = {
     fullDiskAccessPermission: { status: platform === "linux" ? "not-required" : "denied" },
     screenCapturePermission: { status: "denied" },
     accessibilityPermission: { status: "denied" },
   }
   const listeners = new Set<(state: LocalAgentState) => void>()
-  const order = onboardingPermissions(platform)
+  const order = onboardingPermissions(platform, state.linuxDesktopBackend)
   const next = (step: OnboardingStep) => { state.step = step; return { ...state } }
   const onboarding = {
     get: vi.fn(async () => ({ ...state })),
@@ -117,6 +117,16 @@ test("signed-in users resume the saved permission, refresh on focus, and can ret
   await submit()
   expect(app.fake.central.login).not.toHaveBeenCalled()
   expect(view!.text()).toContain("Welcome, Ada")
+})
+
+test("advancing a permission refreshes the newly displayed step after the action finishes", async () => {
+  const app = setup()
+  app.mount()
+  await flushPromises()
+  const reads = app.onboarding.permissions.mock.calls.length
+  await click("Skip for now")
+  expect(view!.get("h1").text()).toBe("Screen recording")
+  expect(app.onboarding.permissions).toHaveBeenCalledTimes(reads + 1)
 })
 
 test("Linux welcome shows the shared startup authorization and continues through both granted steps", async () => {
@@ -294,4 +304,143 @@ for (const platform of ["darwin", "linux"] as const) test(`${platform} permissio
   expect(view!.get('[role="status"]').text()).toBe("Access enabled")
   await click("Continue")
   expect(view!.get("h1").text()).toBe(platform === "linux" ? "Mouse and keyboard control" : "Screen recording")
+})
+
+
+test.each(["x11", null] as const)("Linux %s welcome goes directly to account without Portal guidance", async backend => {
+  const app = setup("account", false, "linux")
+  app.state.linuxDesktopBackend = backend
+  app.permissions.linuxDesktopBackend = backend
+  app.permissions.screenCapturePermission = { status: "not-required" }
+  app.permissions.accessibilityPermission = { status: "not-required" }
+  app.mount()
+  await flushPromises()
+  expect(view!.get("h1").text()).toBe("Sign in to DeskFleet")
+  expect(view!.findAll("ol li").map(item => item.text())).toEqual(["Your account"])
+  expect(view!.text()).not.toMatch(/desktop authorization|sharing dialog|Screen sharing|Mouse and keyboard control/u)
+  expect(app.onboarding.permissions).not.toHaveBeenCalled()
+  expect(app.onboarding.requestPermission).not.toHaveBeenCalled()
+})
+
+test("Linux welcome follows X11 discovered while retrying its initial permission refresh", async () => {
+  const app = setup("screenCapture", false, "linux")
+  app.state.linuxDesktopBackend = undefined
+  let resolve!: (permissions: DesktopPermissionsState) => void
+  app.onboarding.permissions.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+  app.mount()
+  await flushPromises()
+  expect(view!.get("h1").text()).toBe("Screen sharing")
+
+  app.state.linuxDesktopBackend = "x11"
+  app.state.step = "account"
+  resolve({ ...app.permissions, linuxDesktopBackend: "x11", screenCapturePermission: { status: "not-required" }, accessibilityPermission: { status: "not-required" } })
+  await flushPromises()
+  expect(view!.get("h1").text()).toBe("Sign in to DeskFleet")
+  expect(view!.findAll("ol li").map(item => item.text())).toEqual(["Your account"])
+  expect(app.onboarding.requestPermission).not.toHaveBeenCalled()
+  expect(app.onboarding.advancePermission).not.toHaveBeenCalled()
+  await submit()
+  expect(app.onboarding.complete).toHaveBeenCalledOnce()
+  expect(view!.text()).toContain("Welcome, Ada")
+})
+
+test("Linux welcome reconciles a late X11 hello after a failed permission refresh", async () => {
+  const app = setup("screenCapture", false, "linux")
+  app.state.linuxDesktopBackend = undefined
+  app.onboarding.permissions.mockRejectedValueOnce(new Error("Local Agent startup failed"))
+  app.mount()
+  await flushPromises()
+  expect(view!.get('[role="alert"]').text()).toBe("Local Agent startup failed")
+
+  app.state.linuxDesktopBackend = "x11"
+  app.state.step = "account"
+  app.permissions.linuxDesktopBackend = "x11"
+  app.changed()
+  await flushPromises()
+  expect(view!.get("h1").text()).toBe("Sign in to DeskFleet")
+  expect(view!.find('[role="alert"]').exists()).toBe(false)
+  expect(view!.findAll("ol li").map(item => item.text())).toEqual(["Your account"])
+  expect(app.onboarding.requestPermission).not.toHaveBeenCalled()
+})
+
+test("Linux account keeps a sign-in error when reconcile only discovers the backend", async () => {
+  const app = setup("account", false, "linux")
+  app.state.linuxDesktopBackend = undefined
+  app.permissions.linuxDesktopBackend = undefined
+  app.permissions.screenCapturePermission = { status: "not-required" }
+  app.permissions.accessibilityPermission = { status: "not-required" }
+  app.mount()
+  await flushPromises()
+  expect(view!.get("h1").text()).toBe("Sign in to DeskFleet")
+  app.fake.central.login.mockRejectedValueOnce(new Error("Sign-in cancelled"))
+  const reads = app.onboarding.get.mock.calls.length
+  // Failed first-run acts always reconcile; a late hello may only add the backend.
+  app.onboarding.get.mockImplementationOnce(async () => {
+    app.state.linuxDesktopBackend = "x11"
+    return { ...app.state }
+  })
+  await submit()
+  expect(view!.get("h1").text()).toBe("Sign in to DeskFleet")
+  expect(view!.get('[role="alert"]').text()).toBe("Sign-in cancelled")
+  expect(app.onboarding.get).toHaveBeenCalledTimes(reads + 1)
+  expect(app.onboarding.complete).not.toHaveBeenCalled()
+
+  app.permissions.linuxDesktopBackend = "x11"
+  app.changed()
+  await flushPromises()
+  expect(view!.get('[role="alert"]').text()).toBe("Sign-in cancelled")
+})
+
+test("Linux welcome retains Wayland retry guidance while its backend is unknown", async () => {
+  const app = setup("accessibility", false, "linux")
+  app.state.linuxDesktopBackend = undefined
+  app.onboarding.permissions.mockRejectedValueOnce(new Error("Local Agent disconnected"))
+  app.mount()
+  await flushPromises()
+  expect(view!.get("h1").text()).toBe("Mouse and keyboard control")
+  app.state.linuxDesktopBackend = "wayland"
+  app.permissions.linuxDesktopBackend = "wayland"
+  app.changed()
+  await flushPromises()
+  expect(view!.get("h1").text()).toBe("Mouse and keyboard control")
+  await click("Retry access")
+  expect(app.onboarding.requestPermission).toHaveBeenCalledExactlyOnceWith("accessibility")
+})
+
+test("Linux welcome defers late backend reconciliation until an active permission request settles", async () => {
+  const app = setup("screenCapture", false, "linux")
+  app.state.linuxDesktopBackend = undefined
+  let reject!: (reason: Error) => void
+  app.onboarding.requestPermission.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail }))
+  app.mount()
+  await flushPromises()
+  await click("Retry access")
+  const reads = app.onboarding.get.mock.calls.length
+
+  app.state.linuxDesktopBackend = "x11"
+  app.state.step = "account"
+  app.permissions.linuxDesktopBackend = "x11"
+  app.changed()
+  app.changed()
+  await flushPromises()
+  expect(app.onboarding.get).toHaveBeenCalledTimes(reads)
+  reject(new Error("Welcome setup step has changed"))
+  await flushPromises()
+  expect(app.onboarding.get).toHaveBeenCalledTimes(reads + 1)
+  expect(view!.get("h1").text()).toBe("Sign in to DeskFleet")
+  expect(view!.find('[role="alert"]').exists()).toBe(false)
+})
+
+test("Linux welcome recovers when the host normalized its step before the permission read", async () => {
+  const app = setup("screenCapture", false, "linux")
+  app.state.linuxDesktopBackend = undefined
+  app.onboarding.permissions.mockImplementationOnce(async () => {
+    app.state.step = "account"
+    app.state.linuxDesktopBackend = "x11"
+    throw new Error("Welcome setup is not on a permission step")
+  })
+  app.mount()
+  await flushPromises()
+  expect(view!.get("h1").text()).toBe("Sign in to DeskFleet")
+  expect(view!.find('[role="alert"]').exists()).toBe(false)
 })
