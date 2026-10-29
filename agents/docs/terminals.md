@@ -247,10 +247,17 @@ terminal ID and transcript; transport selection never creates another shell.
 New interactive shells receive an `icat` command through a daemon-managed
 directory on their `PATH`. The launcher uses the bundled runtime in source,
 standalone SEA, and Electron installations; it does not require another Node.js
-installation. Shell startup files are not modified. Existing shells retain
-their original environment, and a startup file that replaces `PATH` can hide
-the injected command. Setup programs and ACP command terminals retain their
-explicit environments.
+installation. For Zsh, including the default macOS shell, daemon-managed
+`ZDOTDIR` wrappers load the user's startup files in their normal order and
+move the helper directory to the front of `PATH` after startup, keeping a single
+entry even when system startup reorders the inherited path. This keeps `icat` available when
+login configuration replaces `PATH`, including when the packaged app starts
+from Finder with a different environment from a development shell. The wrappers
+preserve changes to the user's `ZDOTDIR` and restore it when startup completes;
+user startup files are not modified. Existing shells retain their original
+environment. Other shells receive the initial `PATH` injection, which their
+startup files can override. Setup programs and ACP command terminals retain
+their explicit environments.
 
 Use `icat image.png`, `icat -- 'image with spaces.jpg'`, or pipe image bytes into
 `icat`. The helper accepts one PNG, JPEG, or GIF at a time; GIFs display their
