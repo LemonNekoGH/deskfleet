@@ -11,6 +11,7 @@ import { agentEvent, agentInput, agentSnapshot } from "./test/agent.ts"
 import { fakeCentral, machineFixture } from "./test/central.ts"
 import * as analytics from "./services/analytics.ts"
 import { useAgentSessionsStore } from "./stores/agent-sessions.ts"
+import * as machineRuntimes from "./composables/useMachineRuntimes.ts"
 
 const host = getClient()
 const page = () => new DOMWrapper(document.body)
@@ -86,10 +87,12 @@ test("browses synchronized history with the machine offline and isolates equal l
   await router.push("/sessions/30")
   await settled(() => expect(view!.text()).toContain("Message from 101"))
   expect(central.createPeer).not.toHaveBeenCalled()
-  // Other Team machines are collapsed sidebar groups; opening one switches machines.
+  // Opening another machine retains the first machine's expanded resource tree.
   expect(page().find('aside button[data-machine-id="101"]').exists()).toBe(false)
   await page().get('aside button[data-machine-id="102"]').trigger("click")
   await settled(() => expect(view!.text()).toContain("Workspace 102"))
+  expect(page().get("aside").text()).toContain("Workspace 101")
+  expect(page().get("aside").text()).toContain("Conversation 101")
   await router.push("/sessions/30")
   await settled(() => expect(view!.text()).toContain("Message from 102"))
   expect(view.text()).not.toContain("Message from 101")
@@ -97,10 +100,20 @@ test("browses synchronized history with the machine offline and isolates equal l
   // An explicit Session destination survives the fresh Machine mount, even when
   // both machines use the same local Session ID and synchronized offline history.
   const account = view.getComponent({ name: "MachineSurface" }).props("session") as AccountSession
-  account.openSession("101", "30")
+  await page().get('aside section[data-machine-id="101"] a[href="#/sessions/30"]').trigger("click")
   await settled(() => expect(view!.text()).toContain("Message from 101"))
   expect(router.currentRoute.value.path).toBe("/sessions/30")
   expect(view.text()).not.toContain("Message from 102")
+  expect(page().get("aside").text()).toContain("Workspace 102")
+  expect(page().get('aside section[data-machine-id="101"] a[href="#/sessions/30"]').attributes("aria-current")).toBe("page")
+  expect(page().get('aside section[data-machine-id="102"] a[href="#/sessions/30"]').attributes("aria-current")).toBeUndefined()
+  // A catalog update for an inactive machine stays bound to its own client.
+  vi.mocked(central.catalog).mockClear()
+  for (const listener of listeners) listener({ type: "catalogChanged", machineId: "102" } as CentralEvent)
+  await settled(() => expect(central.catalog).toHaveBeenCalledWith("102"))
+  expect(central.catalog).not.toHaveBeenCalledWith("101")
+  account.openSession("102", "30")
+  await settled(() => expect(page().get("main").text()).toContain("Message from 102"))
   await page().get('button[aria-label="Ada"]').trigger("click")
   await page().findAll('button[role="menuitem"]').find(button => button.text() === "Sign out")!.trigger("click")
   await flushPromises()
@@ -126,26 +139,59 @@ function withEmptyCatalogs({ central, state }: ReturnType<typeof fakeCentral>): 
   })
 }
 
-test("late local enrollment switches the same machine's channel without losing its route or draft", async () => {
+test("refreshing to another account remounts the same Team machine in its new identity scope", async () => {
+  const fake = fakeCentral({ machines: [machineFixture("m1", "team-1", "Shared machine", false)] })
+  withEmptyCatalogs(fake)
+  mountShell(fake.central, "web")
+  await settled(() => expect(page().get("aside").text()).toContain("Shared machine"))
+  const previousMain = page().get("main").element
+  const account = view!.getComponent({ name: "MachineSurface" }).props("session") as AccountSession
+  vi.mocked(fake.central.catalog).mockClear()
+  fake.central.status.mockResolvedValue({
+    serverUrl: "https://fleet.example", siteAdmin: false,
+    user: { id: "user-3", name: "Grace", email: "grace@example.test" },
+  })
+
+  await account.reload()
+  await settled(() => {
+    expect(page().find('button[aria-label="Grace"]').exists()).toBe(true)
+    expect(page().get("aside").text()).toContain("Shared machine")
+    expect(fake.central.catalog).toHaveBeenCalledWith("m1")
+  })
+  expect(account.teamId.value).toBe("team-1")
+  expect(account.machineId.value).toBe("m1")
+  expect(page().get("main").element).not.toBe(previousMain)
+})
+
+test.each(["selected", "background"])("late local enrollment switches a %s machine's channel without losing its route or draft", async visibility => {
   const fake = fakeCentral({
-    machines: [machineFixture("mine", "team-1", "This computer", false)],
+    machines: [machineFixture("mine", "team-1", "This computer", false), machineFixture("other", "team-1", "Other machine", false)],
     enrollment: { configured: true, connected: true, revoked: false, serverUrl: "https://fleet.example", teamId: "team-1", machineId: "mine", identity: { originId: "origin-mine", machineId: "1" }, machineName: "This computer" },
   })
   withEmptyCatalogs(fake)
   fake.central.localEnrollment!.mockRejectedValueOnce(new Error("Daemon is starting"))
+  const createRuntimes = vi.spyOn(machineRuntimes, "createMachineRuntimes")
   mountShell(fake.central)
-  await settled(() => expect(getClient().target?.id).toBe("mine"))
-  const api = getClient()
+  const runtimes = createRuntimes.mock.results[0]!.value!
+  await settled(() => expect(runtimes.opened.get("mine")).toBeDefined())
+  const runtime = runtimes.opened.get("mine")!
+  const api = runtime.api
   expect(api.agent.connectChannel).toBeUndefined()
-  const agents = useAgentSessionsStore()
+  await settled(() => expect(page().get("aside").text()).toContain("This computer"))
+  const agents = useAgentSessionsStore(runtime.state)
   agents.drafts["machine:mine"] = "Keep this unsent message"
-  await router.push("/settings/preferences")
   const session = view!.getComponent({ name: "MachineSurface" }).props("session") as AccountSession
+  if (visibility === "background") {
+    session.selectMachine("other")
+    await settled(() => expect(runtimes.opened.get("other")).toBeDefined())
+    await flushPromises()
+  }
+  await router.push("/settings/preferences")
   await session.refreshMachines()
   await settled(() => expect(api.agent.connectChannel).toBeTypeOf("function"))
-  expect(getClient()).toBe(api)
+  expect(runtimes.opened.get("mine")?.api).toBe(api)
   expect(router.currentRoute.value.path).toBe("/settings/preferences")
-  expect(useAgentSessionsStore()).toBe(agents)
+  expect(useAgentSessionsStore(runtime.state)).toBe(agents)
   expect(agents.drafts["machine:mine"]).toBe("Keep this unsent message")
   fake.central.localEnrollment!.mockRejectedValueOnce(new Error("Daemon discovery is temporarily unavailable"))
   await session.refreshMachines()

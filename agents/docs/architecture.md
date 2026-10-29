@@ -405,9 +405,13 @@ Web builds without that variable use the page's origin. Saved desktop account
 addresses only scope credentials to that backend and never override the compiled
 choice. Web authentication uses HttpOnly cookies, without storing the backend
 address in browser storage.
-Both use the selected central Machine identity for routes, caches, drafts, and
-commands; integer local IDs do
-not identify resources across machines. The UI displays synchronized history
+Both retain an independent client adapter and store scope for each opened
+Machine in the selected Team. Selecting another Machine changes the active
+route view while preserving the other resource trees, drafts, and Agent and
+terminal peers. Sidebar navigation selects the owning central Machine before
+opening its local resource; integer local IDs do not identify resources across
+machines. Closing the account, changing Teams, or removing a Machine releases
+the affected scopes and connections. The UI displays synchronized history
 while a machine is offline and attaches through WebRTC for remote live Agent,
 Git, and terminal operations. The local transport below replaces
 WebRTC for those messages when Electron operates its own machine.
@@ -661,10 +665,11 @@ created on demand.
 
 ### Local message channel
 
-Electron selects a direct message channel when the selected Machine matches the
-local daemon's active registration on the signed-in server and selected Team.
+Electron selects a direct message channel for each opened Machine that matches
+the local daemon's active registration on the signed-in server and selected Team.
 Locality follows that registration, never a hostname, loopback API URL, or LAN
-address. Web clients and other machines use WebRTC.
+address. Enrollment changes update a retained Machine's transport choice without
+discarding its stores or drafts. Web clients and other machines use WebRTC.
 
 The shared [DataChannel interface](../../packages/client/src/data-channel.ts)
 covers `readyState`, `binaryType`, `bufferedAmount`,
@@ -701,7 +706,7 @@ deadline releases stalled viewers. The existing Agent and terminal service
 queues remain bounded, and terminal consumption acknowledgements still wait for
 xterm separately. One viewer cannot hold up another viewer or the Agent process.
 
-Closing a channel, navigating or losing a renderer, or changing accounts releases
+Closing a channel, losing a renderer, or changing accounts releases
 its viewers while Agents and shells continue. Reconnection uses existing
 operation receipts and journal/transcript cursors without resubmitting accepted
 commands. A local failure is reported through the local adapter and never falls

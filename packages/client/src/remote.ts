@@ -15,8 +15,8 @@ const management = new Set<string>([
   "_deskfleet/git/branches",
 ])
 
-/** One selected machine owns this adapter; the host replaces its Pinia scope on target changes. */
-export function remoteMachineClient(host: DeskfleetDesktopApi, central: CentralApi, machine: Machine, options: { local?: boolean } = {}): { api: DeskfleetDesktopApi; setLocal(local: boolean): void; dispose(): void } {
+/** One opened machine owns this adapter until its account/Team scope is released. */
+export function remoteMachineClient(host: DeskfleetDesktopApi, central: CentralApi, machine: Machine, options: { local?: boolean } = {}): { api: DeskfleetDesktopApi; updateMachine(value: Machine): void; setLocal(local: boolean): void; dispose(): void } {
   let local = options.local === true && host.platform !== "web"
   const localChannels = new Map<string, LocalDataChannel>()
   const peers = new Map<string, Peer>()
@@ -42,9 +42,11 @@ export function remoteMachineClient(host: DeskfleetDesktopApi, central: CentralA
         emit({ ...event.event, sessionId: local[0] } as DesktopEvent)
       }
       else emit({ sessionId: local[0], kind: "error", error: event.reason })
-    } else if (event.type === "catalogChanged" && event.machineId === machine.id) {
-      for (const listener of catalogEvents) listener(event.sessionId)
-      if (!event.sessionId) for (const listener of providerEvents) listener()
+    } else if ((event.type === "catalogChanged" && event.machineId === machine.id) || (event.type === "connection" && event.connected)) {
+      // Reconnect can miss catalog updates even when the machine's roster metadata is unchanged.
+      const sessionId = event.type === "catalogChanged" ? event.sessionId : undefined
+      for (const listener of catalogEvents) listener(sessionId)
+      if (!sessionId) for (const listener of providerEvents) listener()
     } else if (event.type === "presence" && event.machineId === machine.id) {
       online = event.online
       for (const listener of catalogEvents) listener()
@@ -154,6 +156,16 @@ export function remoteMachineClient(host: DeskfleetDesktopApi, central: CentralA
   }
   return {
     api,
+    // A refreshed roster repairs presence events missed during signaling loss,
+    // without replacing the adapter or revoking its still-authorized peers.
+    updateMachine(value) {
+      const lastSeen = value.lastSeenAt ?? undefined
+      if (online === value.online && name === value.name && api.target!.lastSeen === lastSeen) return
+      online = value.online
+      name = value.name
+      api.target!.lastSeen = lastSeen
+      for (const listener of catalogEvents) listener()
+    },
     // The surface detaches its viewers first; management subscriptions and caches stay in place.
     setLocal(value) {
       local = value && host.platform !== "web"

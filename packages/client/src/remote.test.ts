@@ -19,8 +19,42 @@ function fixture(host: Partial<DeskfleetDesktopApi> = {}, local = false) {
   const machine: Machine = { id: "central7", teamId: "team2", name: "Remote", originId: "origin", localMachineId: "1", capabilities: {}, online: false }
   const remote = remoteMachineClient({ platform: "web", locale: "en-US", ...host } as DeskfleetDesktopApi, central, machine, { local })
   disposers.push(remote.dispose)
-  return { remote, central, emit: (event: CentralEvent) => listener(event) }
+  return { remote, central, machine, emit: (event: CentralEvent) => listener(event) }
 }
+test("a refreshed machine reconciles missed presence without replacing its peer", async () => {
+  const f = fixture()
+  const changed = vi.fn()
+  f.remote.api.catalog.onChanged(changed)
+  await f.remote.api.agent.prepare!("retained-peer")
+  f.emit({ type: "connection", connected: false })
+  const updated = { ...f.machine, online: true, name: "Renamed remote", lastSeenAt: "2026-10-29T12:00:00Z" }
+  f.central.machines = vi.fn(async () => [updated])
+  f.remote.updateMachine(updated)
+  expect(f.remote.api.agent.history!.available()).toBe(true)
+  expect(await f.remote.api.desktop.target()).toMatchObject({ name: updated.name, online: true })
+  expect(f.remote.api.target!.lastSeen).toBe(updated.lastSeenAt)
+  expect(changed).toHaveBeenCalledOnce()
+  f.remote.updateMachine({ ...updated })
+  expect(changed).toHaveBeenCalledOnce()
+  await f.remote.api.agent.offer({ sessionId: "retained-peer", sdp: "offer" })
+  expect(f.central.offerPeer).toHaveBeenCalledWith("peer1", "offer", { sessionId: "retained-peer", sdp: "offer" })
+  expect(f.central.closePeer).not.toHaveBeenCalled()
+})
+
+test("refreshing a retained local machine preserves its direct channels and locality", async () => {
+  const bridge: LocalChannelsApi = { open: vi.fn(async () => {}), send: vi.fn(async () => {}), close: vi.fn(async () => {}), onEvent: () => () => {} }
+  const f = fixture({ platform: "darwin", localChannels: bridge }, true)
+  const agent = f.remote.api.agent.connectChannel!("agent"), terminal = f.remote.api.terminal.connectChannel!("terminal")
+  await vi.waitFor(() => { expect(agent.readyState).toBe("open"); expect(terminal.readyState).toBe("open") })
+  f.remote.updateMachine({ ...f.machine, online: true, name: "Renamed local", lastSeenAt: "2026-10-29T12:00:00Z" })
+  expect(f.remote.api.agent.history!.available()).toBe(true)
+  expect(f.remote.api.target?.local).toBe(true)
+  expect(f.remote.api.agent.control!("_deskfleet/git/branches", { workspaceId: "1" })).toBeUndefined()
+  expect(agent.readyState).toBe("open")
+  expect(terminal.readyState).toBe("open")
+  expect(bridge.close).not.toHaveBeenCalled()
+  expect(f.central.createPeer).not.toHaveBeenCalled()
+})
 
 test("verified local targets use direct Agent/Git and terminal channels, while desktop retains WebRTC", async () => {
   const bridge: LocalChannelsApi = { open: vi.fn(async () => {}), send: vi.fn(async () => {}), close: vi.fn(async () => {}), onEvent: () => () => {} }
